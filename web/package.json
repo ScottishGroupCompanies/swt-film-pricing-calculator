@@ -1,0 +1,30 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^147.0.0",
+    "@types/nodemailer": "^8.0.1",
+    "@vercel/blob": "^2.6.1",
+    "next": "16.2.11",
+    "nodemailer": "^9.0.3",
+    "puppeteer-core": "^25.4.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.11",
+    "typescript": "^5",
+    "vercel": "^58.4.0"
+  }
+}
