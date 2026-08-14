@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, useSyncExternalStore } from "react";
 import {
   PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, OVER_UNDER_RATE, DEFAULT_FEE_PCT,
   DESIGNERS, FILMS, BRANDS, BRAND_COLORS,
@@ -29,6 +29,35 @@ const THEME = {
   textMuted: "#888",
 };
 
+// ─── RESPONSIVE BREAKPOINT HOOK ───────────────────────────────────────────
+// The whole component uses inline JS styles (no CSS modules/Tailwind), so
+// responsive behavior is driven from here rather than @media queries.
+// isMobile: phones (<640px) — single column everywhere, line items become
+// stacked cards instead of a grid table.
+// isTablet: iPads/small laptops (640–1023px) — sidebar stacks below the
+// form instead of sitting beside it, but line items keep the grid table
+// (just with fewer/narrower columns).
+function useBreakpoint() {
+  // useSyncExternalStore is the React-recommended way to subscribe to an
+  // external mutable value like window.innerWidth: it has a built-in
+  // server snapshot (so SSR and the first client render always agree —
+  // no hydration mismatch) and needs no setState-in-effect at all.
+  const width = useSyncExternalStore(
+    (onStoreChange) => {
+      window.addEventListener("resize", onStoreChange);
+      return () => window.removeEventListener("resize", onStoreChange);
+    },
+    () => window.innerWidth,
+    () => 1280 // server snapshot — must match what SSR renders (desktop default)
+  );
+  return {
+    width,
+    isMobile: width < 640,
+    isTablet: width >= 640 && width < 1024,
+    isDesktop: width >= 1024,
+  };
+}
+
 // ─── FILM PICKER (portal dropdown, escapes overflow clipping) ────────────
 
 import { createPortal } from "react-dom";
@@ -41,13 +70,14 @@ function FilmPicker({
   onFilm: (f: Film | null) => void;
   onPgOverride: (v: number | null) => void;
 }) {
+  const { isMobile } = useBreakpoint();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [brandFilter, setBrandFilter] = useState<string | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 580 });
 
   // Close on outside click
   useEffect(() => {
@@ -68,21 +98,23 @@ function FilmPicker({
   useEffect(() => {
     if (open && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      const dropdownWidth = 580;
+      // On phones, use nearly the full viewport width instead of a fixed
+      // 580px dropdown (which would overflow and force horizontal scroll).
+      const dropdownWidth = isMobile ? Math.min(window.innerWidth - 24, 420) : 580;
       // Position below the trigger, aligned to left edge
-      let left = rect.left;
+      let left = isMobile ? 12 : rect.left;
       // If it would overflow the right edge, shift left
-      if (left + dropdownWidth > window.innerWidth - 16) {
+      if (!isMobile && left + dropdownWidth > window.innerWidth - 16) {
         left = window.innerWidth - dropdownWidth - 16;
       }
       // If it would overflow the left edge, align to left
-      if (left < 16) left = 16;
+      if (left < 16 && !isMobile) left = 16;
 
       const top = rect.bottom + 4;
-      setDropdownPos({ top, left });
+      setDropdownPos({ top, left, width: dropdownWidth });
       setTimeout(() => inputRef.current?.focus(), 80);
     }
-  }, [open]);
+  }, [open, isMobile]);
 
   // Recalculate on scroll/resize while open
   useEffect(() => {
@@ -90,7 +122,9 @@ function FilmPicker({
     const update = () => {
       if (triggerRef.current) {
         const rect = triggerRef.current.getBoundingClientRect();
-        setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+        const dropdownWidth = isMobile ? Math.min(window.innerWidth - 24, 420) : 580;
+        const left = isMobile ? 12 : rect.left;
+        setDropdownPos({ top: rect.bottom + 4, left, width: dropdownWidth });
       }
     };
     window.addEventListener("scroll", update, true);
@@ -99,7 +133,7 @@ function FilmPicker({
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [open]);
+  }, [open, isMobile]);
 
   const filtered = useMemo(() => {
     const lo = q.toLowerCase();
@@ -164,7 +198,7 @@ function FilmPicker({
             position: "fixed",
             top: dropdownPos.top,
             left: dropdownPos.left,
-            width: 580,
+            width: dropdownPos.width,
             background: THEME.white,
             border: `1px solid ${THEME.border}`,
             borderRadius: 12,
@@ -259,7 +293,7 @@ function FilmPicker({
                   {brand} ({films.length})
                 </div>
                 <div style={{
-                  display: "grid", gridTemplateColumns: "1fr 1fr",
+                  display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
                   gap: 0, padding: "0 4px",
                 }}>
                   {films.map((f) => (
@@ -322,10 +356,11 @@ function DesignerPicker({
   designer: Designer | null;
   onSelect: (d: Designer) => void;
 }) {
+  const { isMobile } = useBreakpoint();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+  const [pos, setPos] = useState<{ top: number; right: number; width: number }>({ top: 0, right: 0, width: 320 });
 
   useEffect(() => {
     if (!open) return;
@@ -340,17 +375,24 @@ function DesignerPicker({
 
   useEffect(() => {
     if (open && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      setPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
-      const update = () => {
+      const compute = () => {
         const r = triggerRef.current?.getBoundingClientRect();
-        if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+        if (!r) return;
+        // Clamp to the viewport so the dropdown never overflows on phones —
+        // a fixed 320px width can push past the right edge when the trigger
+        // button sits close to it on a narrow screen.
+        const width = Math.min(320, window.innerWidth - 24);
+        let right = window.innerWidth - r.right;
+        if (right + width > window.innerWidth - 12) right = window.innerWidth - width - 12;
+        if (right < 12) right = 12;
+        setPos({ top: r.bottom + 4, right, width });
       };
-      window.addEventListener("scroll", update, true);
-      window.addEventListener("resize", update);
+      compute();
+      window.addEventListener("scroll", compute, true);
+      window.addEventListener("resize", compute);
       return () => {
-        window.removeEventListener("scroll", update, true);
-        window.removeEventListener("resize", update);
+        window.removeEventListener("scroll", compute, true);
+        window.removeEventListener("resize", compute);
       };
     }
   }, [open]);
@@ -367,7 +409,7 @@ function DesignerPicker({
           borderRadius: 8, padding: "5px 12px 5px 5px", cursor: "pointer",
           color: designer ? THEME.textDark : "#fff",
           fontFamily: "inherit", fontSize: 13, fontWeight: 500,
-          transition: "all 0.15s",
+          transition: "all 0.15s", maxWidth: isMobile ? 150 : undefined,
         }}
       >
         <div style={{
@@ -379,13 +421,15 @@ function DesignerPicker({
         }}>
           {designer ? initials(designer.name) : "?"}
         </div>
-        <span>{designer ? designer.name : "Select designer"}</span>
-        {designer && (
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {designer ? designer.name : "Select designer"}
+        </span>
+        {designer && !isMobile && (
           <span style={{ fontSize: 11, color: THEME.textMuted, fontWeight: 400 }}>
             · {designer.loc}
           </span>
         )}
-        <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
@@ -394,7 +438,7 @@ function DesignerPicker({
         <div
           ref={dropdownRef}
           style={{
-            position: "fixed", top: pos.top, right: pos.right, width: 320,
+            position: "fixed", top: pos.top, right: pos.right, width: pos.width,
             background: THEME.white, border: `1px solid ${THEME.border}`, borderRadius: 12,
             zIndex: 9999, boxShadow: "0 16px 48px rgba(0,0,0,.18)",
             maxHeight: 400, overflowY: "auto", padding: 6,
@@ -555,7 +599,7 @@ function ContactSearchPicker({
             position: "fixed",
             top: dropdownPos.top,
             left: dropdownPos.left,
-            width: Math.max(dropdownPos.width, 360),
+            width: Math.min(Math.max(dropdownPos.width, 360), window.innerWidth - 24),
             background: THEME.white,
             border: `1px solid ${THEME.border}`,
             borderRadius: 12,
@@ -665,6 +709,15 @@ const smallBtnSt: React.CSSProperties = {
 // ─── MAIN APP ────────────────────────────────────────────────────────────
 
 export default function PricingCalculator() {
+  const { isMobile, isTablet } = useBreakpoint();
+  // Collapses N-column form grids to 1 column on phones so fields never get
+  // squeezed unreadably narrow; tablets keep multi-column but never more
+  // than 2 wide (3-column grids become 2 on tablet).
+  const gridCols = (n: 2 | 3): string => {
+    if (isMobile) return "1fr";
+    if (isTablet) return n === 3 ? "1fr 1fr" : "1fr 1fr";
+    return n === 3 ? "1fr 1fr 1fr" : "1fr 1fr";
+  };
   const [designer, setDesigner] = useState<Designer | null>(null);
   const [customer, setCustomer] = useState("");
   const [address, setAddress] = useState("");
@@ -1046,45 +1099,53 @@ export default function PricingCalculator() {
     }}>
       {/* ── HEADER ── */}
       <header style={{
-        background: THEME.darkGray, padding: "0 28px",
+        background: THEME.darkGray, padding: isMobile ? "10px 14px" : "0 28px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        height: 60, flexShrink: 0,
+        flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? 8 : 0,
+        height: isMobile ? "auto" : 60, flexShrink: 0,
         borderBottom: `3px solid ${THEME.green}`,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 14, minWidth: 0 }}>
           {/* Logo */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/swt-logo.png"
             alt="Scottish Window Tinting"
-            style={{ height: 32, width: "auto" }}
+            style={{ height: isMobile ? 24 : 32, width: "auto", flexShrink: 0 }}
           />
-          <div style={{
-            height: 24, width: 1, background: "rgba(255,255,255,0.15)",
-          }} />
-          <span style={{
-            fontFamily: "var(--font-cormorant), Georgia, serif",
-            color: "rgba(255,255,255,0.7)", fontSize: 16, fontStyle: "italic",
-          }}>
-            Film Pricing Calculator
-          </span>
+          {!isMobile && (
+            <>
+              <div style={{
+                height: 24, width: 1, background: "rgba(255,255,255,0.15)",
+              }} />
+              <span style={{
+                fontFamily: "var(--font-cormorant), Georgia, serif",
+                color: "rgba(255,255,255,0.7)", fontSize: 16, fontStyle: "italic",
+                whiteSpace: "nowrap",
+              }}>
+                Film Pricing Calculator
+              </span>
+            </>
+          )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: "wrap" }}>
           {/* Min dim */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Min dim</span>
-            <input
-              type="number" value={minDim} min={1} step={0.5}
-              onChange={(e) => setMinDim(parseFloat(e.target.value) || MIN_DIM_DEFAULT)}
-              style={{
-                width: 52, padding: "4px 8px",
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 6, color: "#fff", fontSize: 12, fontFamily: "inherit", textAlign: "center",
-              }}
-            />
-            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>&quot;</span>
-          </div>
+          {!isMobile && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Min dim</span>
+              <input
+                type="number" value={minDim} min={1} step={0.5}
+                onChange={(e) => setMinDim(parseFloat(e.target.value) || MIN_DIM_DEFAULT)}
+                style={{
+                  width: 52, padding: "4px 8px",
+                  background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 6, color: "#fff", fontSize: 12, fontFamily: "inherit", textAlign: "center",
+                }}
+              />
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>&quot;</span>
+            </div>
+          )}
 
           {/* Designer picker */}
           <DesignerPicker designer={designer} onSelect={setDesigner} />
@@ -1092,14 +1153,24 @@ export default function PricingCalculator() {
       </header>
 
       {/* ── MAIN LAYOUT ── */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 320px", overflow: "hidden" }}>
+      <div style={{
+        flex: 1,
+        display: isMobile || isTablet ? "flex" : "grid",
+        flexDirection: isMobile || isTablet ? "column" : undefined,
+        gridTemplateColumns: isMobile || isTablet ? undefined : "1fr 320px",
+        overflow: isMobile || isTablet ? "visible" : "hidden",
+      }}>
         {/* LEFT — form + proposals */}
-        <div style={{ padding: "24px 28px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
+        <div style={{
+          padding: isMobile ? "16px 14px" : isTablet ? "20px 20px" : "24px 28px",
+          overflowY: isMobile || isTablet ? "visible" : "auto",
+          display: "flex", flexDirection: "column", gap: isMobile ? 16 : 24,
+        }}>
 
           {/* Job info card */}
           <section style={{
             background: THEME.white, borderRadius: 12,
-            border: `1px solid ${THEME.border}`, padding: "20px 24px",
+            border: `1px solid ${THEME.border}`, padding: isMobile ? "16px 16px" : "20px 24px",
           }}>
             <p style={labelSt}>Customer Information</p>
 
@@ -1110,7 +1181,7 @@ export default function PricingCalculator() {
                   key={t}
                   onClick={() => setJobType(t)}
                   style={{
-                    flex: 1, padding: "8px 14px", borderRadius: 8,
+                    flex: 1, padding: isMobile ? "10px 10px" : "8px 14px", borderRadius: 8,
                     border: `1.5px solid ${jobType === t ? THEME.green : THEME.border}`,
                     background: jobType === t ? THEME.greenBg : THEME.white,
                     color: jobType === t ? THEME.greenDark : THEME.textMuted,
@@ -1177,7 +1248,7 @@ export default function PricingCalculator() {
                 <p style={{ fontSize: 10, fontWeight: 700, color: THEME.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
                   Business (Zoho Account)
                 </p>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: gridCols(2), gap: 12, marginBottom: 10 }}>
                   <div>
                     <p style={{ fontSize: 10, fontWeight: 600, color: THEME.textMuted, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
                       Business Name
@@ -1201,7 +1272,7 @@ export default function PricingCalculator() {
                     />
                   </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: gridCols(3), gap: 12, marginBottom: 12 }}>
                   <input value={companyCityStateZip} onChange={(e) => setCompanyCityStateZip(e.target.value)} placeholder="Business City, State, ZIP" style={inputSt} />
                   <input value={companyPhone} onChange={(e) => setCompanyPhone(e.target.value)} placeholder="Business Phone" style={inputSt} />
                   <input value={companyEmail} onChange={(e) => setCompanyEmail(e.target.value)} placeholder="Business Email" type="email" style={inputSt} />
@@ -1210,7 +1281,7 @@ export default function PricingCalculator() {
                 <p style={{ fontSize: 10, fontWeight: 700, color: THEME.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
                   Contact Person (Zoho Contact)
                 </p>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: gridCols(2), gap: 12, marginBottom: 10 }}>
                   <div>
                     <p style={{ fontSize: 10, fontWeight: 600, color: THEME.textMuted, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
                       Contact Name
@@ -1234,7 +1305,7 @@ export default function PricingCalculator() {
                     />
                   </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: gridCols(3), gap: 12 }}>
                   <input value={contactBillingCityStateZip} onChange={(e) => setContactBillingCityStateZip(e.target.value)} placeholder="Billing City, State, ZIP" style={inputSt} />
                   <input value={contactPersonPhone} onChange={(e) => setContactPersonPhone(e.target.value)} placeholder="Contact Phone" style={inputSt} />
                   <input value={contactPersonEmail} onChange={(e) => setContactPersonEmail(e.target.value)} placeholder="Contact Email" type="email" style={inputSt} />
@@ -1242,7 +1313,7 @@ export default function PricingCalculator() {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols(2), gap: 12, marginBottom: 12 }}>
               <input
                 value={customer}
                 onChange={(e) => { setCustomer(e.target.value); setExistingContactId(null); }}
@@ -1251,7 +1322,7 @@ export default function PricingCalculator() {
               />
               <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder={jobType === "Commercial" ? "Job / Installation address" : "Job address"} style={inputSt} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: gridCols(3), gap: 12, marginBottom: 12 }}>
               <input value={cityStateZip} onChange={(e) => setCityStateZip(e.target.value)} placeholder="City, State, ZIP" style={inputSt} />
               <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone" style={inputSt} />
               <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" style={inputSt} />
@@ -1294,156 +1365,283 @@ export default function PricingCalculator() {
               </p>
             </div>
 
-            {/* Table */}
+            {/* Table (desktop/tablet) or stacked cards (mobile) */}
             <div>
-              {/* Header row */}
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "130px 1fr 52px 52px 48px 60px 90px 32px",
-                background: THEME.lightGray, borderBottom: `1px solid ${THEME.border}`,
-              }}>
-                {["Description", "Film", "W\"", "H\"", "Qty", "Roll", "Line Total", ""].map((h, i) => (
-                  <div key={i} style={{
-                    padding: "9px 8px", fontSize: 10, fontWeight: 600,
-                    color: THEME.textMuted, textTransform: "uppercase", letterSpacing: ".06em",
-                  }}>
-                    {h}
-                  </div>
-                ))}
-              </div>
+              {isMobile ? (
+                <>
+                  {/* Mobile: each window is its own card instead of a table row —
+                      table columns would be unreadably narrow on a phone screen. */}
+                  {rows.map((row, idx) => {
+                    const c = lineCalcs[idx];
+                    return (
+                      <div key={row.id} style={{
+                        padding: "12px 14px",
+                        borderBottom: `1px solid ${THEME.lightGray}`,
+                        display: "flex", flexDirection: "column", gap: 8,
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                          <input
+                            value={row.desc}
+                            onChange={(e) => updateRow(row.id, "desc", e.target.value)}
+                            placeholder={`Window ${idx + 1}`}
+                            style={{ ...cellSt, flex: 1, fontWeight: 600 }}
+                          />
+                          <button
+                            onClick={() => removeRow(row.id)}
+                            style={{
+                              background: "none", border: "none", cursor: "pointer",
+                              color: "#ccc", padding: 6, borderRadius: 4, lineHeight: 1, flexShrink: 0,
+                            }}
+                          >
+                            <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <path d="M18 6L6 18M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
 
-              {/* Data rows */}
-              {rows.map((row, idx) => {
-                const c = lineCalcs[idx];
-                return (
-                  <div key={row.id} style={{
-                    display: "grid",
-                    gridTemplateColumns: "130px 1fr 52px 52px 48px 60px 90px 32px",
-                    borderBottom: `1px solid ${THEME.lightGray}`, alignItems: "center",
-                    background: THEME.white,
-                    transition: "background 0.1s",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = THEME.lightGray)}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = THEME.white)}
-                  >
-                    {/* Description */}
-                    <div style={{ padding: "5px 6px" }}>
-                      <input
-                        value={row.desc}
-                        onChange={(e) => updateRow(row.id, "desc", e.target.value)}
-                        placeholder={`Window ${idx + 1}`}
-                        style={{ ...cellSt, width: "100%" }}
-                      />
-                    </div>
-                    {/* Film picker */}
-                    <div style={{ padding: "5px 6px", minWidth: 0 }}>
-                      <FilmPicker
-                        film={row.film}
-                        pgOverride={row.pgOverride}
-                        onFilm={(f) => updateRow(row.id, "film", f)}
-                        onPgOverride={(v) => updateRow(row.id, "pgOverride", v)}
-                      />
-                    </div>
-                    {/* W */}
-                    <div style={{ padding: "5px 4px" }}>
-                      <input
-                        type="number" min={1} step={0.5} value={row.w}
-                        onChange={(e) => updateRow(row.id, "w", e.target.value)}
-                        placeholder="0" style={{ ...cellSt, width: "100%", textAlign: "right" }}
-                      />
-                    </div>
-                    {/* H */}
-                    <div style={{ padding: "5px 4px" }}>
-                      <input
-                        type="number" min={1} step={0.5} value={row.h}
-                        onChange={(e) => updateRow(row.id, "h", e.target.value)}
-                        placeholder="0" style={{ ...cellSt, width: "100%", textAlign: "right" }}
-                      />
-                    </div>
-                    {/* Qty */}
-                    <div style={{ padding: "5px 4px" }}>
-                      <input
-                        type="number" min={1} step={1} value={row.qty}
-                        onChange={(e) => updateRow(row.id, "qty", e.target.value)}
-                        style={{ ...cellSt, width: "100%", textAlign: "right" }}
-                      />
-                    </div>
-                    {/* Roll badge */}
-                    <div style={{ padding: "5px 8px" }}>
-                      {c ? (
-                        <span style={{
-                          background: THEME.greenBg, color: THEME.greenDark,
-                          fontWeight: 600, fontSize: 11, padding: "3px 8px", borderRadius: 6,
-                        }}>
-                          {c.rollW}&quot;
-                        </span>
-                      ) : (
-                        <span style={{ color: "#ccc", fontSize: 12 }}>—</span>
-                      )}
-                    </div>
-                    {/* Line total — editable override */}
-                    <div style={{ padding: "5px 8px" }}>
-                      {c ? (
-                        <div>
-                          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                            <span style={{
-                              position: "absolute", left: 6, fontSize: 13, color: THEME.textMuted, pointerEvents: "none",
-                            }}>$</span>
+                        <FilmPicker
+                          film={row.film}
+                          pgOverride={row.pgOverride}
+                          onFilm={(f) => updateRow(row.id, "film", f)}
+                          onPgOverride={(v) => updateRow(row.id, "pgOverride", v)}
+                        />
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                          <div>
+                            <p style={{ fontSize: 9, color: THEME.textMuted, marginBottom: 2, textTransform: "uppercase" }}>Width&quot;</p>
                             <input
-                              type="text"
-                              inputMode="decimal"
-                              value={row.lineTotalOverride}
-                              onChange={(e) => updateRow(row.id, "lineTotalOverride", e.target.value)}
-                              placeholder={c.calculatedLineTotal != null ? c.calculatedLineTotal.toFixed(2) : "—"}
-                              title={c.isOverridden ? "Manually overridden — clear to use auto-calculated value" : "Auto-calculated — type to override (e.g. for a harder window)"}
-                              style={{
-                                width: "100%", padding: "4px 6px 4px 18px",
-                                fontSize: 13, fontWeight: 600,
-                                color: c.isOverridden ? THEME.greenDark : THEME.textDark,
-                                fontVariantNumeric: "tabular-nums",
-                                border: `1px solid ${c.isOverridden ? THEME.green : "transparent"}`,
-                                borderRadius: 6,
-                                background: c.isOverridden ? THEME.greenBg : "transparent",
-                                outline: "none",
-                              }}
+                              type="number" min={1} step={0.5} value={row.w}
+                              onChange={(e) => updateRow(row.id, "w", e.target.value)}
+                              placeholder="0" style={{ ...cellSt, width: "100%", textAlign: "center" }}
                             />
                           </div>
-                          <div style={{ fontSize: 10, color: THEME.textMuted, paddingLeft: 6, display: "flex", alignItems: "center", gap: 4 }}>
-                            {c.chargedSF.toFixed(1)} SF
-                            {c.isOverridden && c.calculatedLineTotal != null && (
-                              <span
-                                title="Reset to auto-calculated value"
-                                onClick={() => updateRow(row.id, "lineTotalOverride", "")}
-                                style={{ cursor: "pointer", color: THEME.greenDark, textDecoration: "underline" }}
-                              >
-                                reset (calc: {fmt$(c.calculatedLineTotal)})
-                              </span>
-                            )}
+                          <div>
+                            <p style={{ fontSize: 9, color: THEME.textMuted, marginBottom: 2, textTransform: "uppercase" }}>Height&quot;</p>
+                            <input
+                              type="number" min={1} step={0.5} value={row.h}
+                              onChange={(e) => updateRow(row.id, "h", e.target.value)}
+                              placeholder="0" style={{ ...cellSt, width: "100%", textAlign: "center" }}
+                            />
+                          </div>
+                          <div>
+                            <p style={{ fontSize: 9, color: THEME.textMuted, marginBottom: 2, textTransform: "uppercase" }}>Qty</p>
+                            <input
+                              type="number" min={1} step={1} value={row.qty}
+                              onChange={(e) => updateRow(row.id, "qty", e.target.value)}
+                              style={{ ...cellSt, width: "100%", textAlign: "center" }}
+                            />
                           </div>
                         </div>
-                      ) : (
-                        <span style={{ color: "#ccc", fontSize: 12 }}>—</span>
-                      )}
-                    </div>
-                    {/* Delete */}
-                    <div style={{ padding: "5px 4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <button
-                        onClick={() => removeRow(row.id)}
-                        style={{
-                          background: "none", border: "none", cursor: "pointer",
-                          color: "#ccc", padding: 4, borderRadius: 4, lineHeight: 1,
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = "#fef2f2"; e.currentTarget.style.color = "#e04d46"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#ccc"; }}
-                      >
-                        <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path d="M18 6L6 18M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
+
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {c ? (
+                              <span style={{
+                                background: THEME.greenBg, color: THEME.greenDark,
+                                fontWeight: 600, fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                              }}>
+                                Roll {c.rollW}&quot;
+                              </span>
+                            ) : (
+                              <span style={{ color: "#ccc", fontSize: 12 }}>—</span>
+                            )}
+                            {c && <span style={{ fontSize: 10, color: THEME.textMuted }}>{c.chargedSF.toFixed(1)} SF</span>}
+                          </div>
+                          {c ? (
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                                <span style={{ position: "absolute", left: 6, fontSize: 13, color: THEME.textMuted, pointerEvents: "none" }}>$</span>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={row.lineTotalOverride}
+                                  onChange={(e) => updateRow(row.id, "lineTotalOverride", e.target.value)}
+                                  placeholder={c.calculatedLineTotal != null ? c.calculatedLineTotal.toFixed(2) : "—"}
+                                  style={{
+                                    width: 90, padding: "5px 6px 5px 18px",
+                                    fontSize: 14, fontWeight: 700, textAlign: "right",
+                                    color: c.isOverridden ? THEME.greenDark : THEME.textDark,
+                                    fontVariantNumeric: "tabular-nums",
+                                    border: `1px solid ${c.isOverridden ? THEME.green : THEME.border}`,
+                                    borderRadius: 6,
+                                    background: c.isOverridden ? THEME.greenBg : THEME.white,
+                                    outline: "none",
+                                  }}
+                                />
+                              </div>
+                              {c.isOverridden && c.calculatedLineTotal != null && (
+                                <div
+                                  onClick={() => updateRow(row.id, "lineTotalOverride", "")}
+                                  style={{ fontSize: 9, color: THEME.greenDark, textDecoration: "underline", cursor: "pointer", marginTop: 2 }}
+                                >
+                                  reset (calc: {fmt$(c.calculatedLineTotal)})
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span style={{ color: "#ccc", fontSize: 12 }}>—</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              ) : (
+                <>
+                  {/* Header row */}
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: isTablet
+                      ? "110px 1fr 46px 46px 40px 52px 84px 28px"
+                      : "130px 1fr 52px 52px 48px 60px 90px 32px",
+                    background: THEME.lightGray, borderBottom: `1px solid ${THEME.border}`,
+                  }}>
+                    {["Description", "Film", "W\"", "H\"", "Qty", "Roll", "Line Total", ""].map((h, i) => (
+                      <div key={i} style={{
+                        padding: "9px 8px", fontSize: 10, fontWeight: 600,
+                        color: THEME.textMuted, textTransform: "uppercase", letterSpacing: ".06em",
+                      }}>
+                        {h}
+                      </div>
+                    ))}
                   </div>
-                );
-              })}
+
+                  {/* Data rows */}
+                  {rows.map((row, idx) => {
+                    const c = lineCalcs[idx];
+                    return (
+                      <div key={row.id} style={{
+                        display: "grid",
+                        gridTemplateColumns: isTablet
+                          ? "110px 1fr 46px 46px 40px 52px 84px 28px"
+                          : "130px 1fr 52px 52px 48px 60px 90px 32px",
+                        borderBottom: `1px solid ${THEME.lightGray}`, alignItems: "center",
+                        background: THEME.white,
+                        transition: "background 0.1s",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = THEME.lightGray)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = THEME.white)}
+                      >
+                        {/* Description */}
+                        <div style={{ padding: "5px 6px" }}>
+                          <input
+                            value={row.desc}
+                            onChange={(e) => updateRow(row.id, "desc", e.target.value)}
+                            placeholder={`Window ${idx + 1}`}
+                            style={{ ...cellSt, width: "100%" }}
+                          />
+                        </div>
+                        {/* Film picker */}
+                        <div style={{ padding: "5px 6px", minWidth: 0 }}>
+                          <FilmPicker
+                            film={row.film}
+                            pgOverride={row.pgOverride}
+                            onFilm={(f) => updateRow(row.id, "film", f)}
+                            onPgOverride={(v) => updateRow(row.id, "pgOverride", v)}
+                          />
+                        </div>
+                        {/* W */}
+                        <div style={{ padding: "5px 4px" }}>
+                          <input
+                            type="number" min={1} step={0.5} value={row.w}
+                            onChange={(e) => updateRow(row.id, "w", e.target.value)}
+                            placeholder="0" style={{ ...cellSt, width: "100%", textAlign: "right" }}
+                          />
+                        </div>
+                        {/* H */}
+                        <div style={{ padding: "5px 4px" }}>
+                          <input
+                            type="number" min={1} step={0.5} value={row.h}
+                            onChange={(e) => updateRow(row.id, "h", e.target.value)}
+                            placeholder="0" style={{ ...cellSt, width: "100%", textAlign: "right" }}
+                          />
+                        </div>
+                        {/* Qty */}
+                        <div style={{ padding: "5px 4px" }}>
+                          <input
+                            type="number" min={1} step={1} value={row.qty}
+                            onChange={(e) => updateRow(row.id, "qty", e.target.value)}
+                            style={{ ...cellSt, width: "100%", textAlign: "right" }}
+                          />
+                        </div>
+                        {/* Roll badge */}
+                        <div style={{ padding: "5px 8px" }}>
+                          {c ? (
+                            <span style={{
+                              background: THEME.greenBg, color: THEME.greenDark,
+                              fontWeight: 600, fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                            }}>
+                              {c.rollW}&quot;
+                            </span>
+                          ) : (
+                            <span style={{ color: "#ccc", fontSize: 12 }}>—</span>
+                          )}
+                        </div>
+                        {/* Line total — editable override */}
+                        <div style={{ padding: "5px 8px" }}>
+                          {c ? (
+                            <div>
+                              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                <span style={{
+                                  position: "absolute", left: 6, fontSize: 13, color: THEME.textMuted, pointerEvents: "none",
+                                }}>$</span>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={row.lineTotalOverride}
+                                  onChange={(e) => updateRow(row.id, "lineTotalOverride", e.target.value)}
+                                  placeholder={c.calculatedLineTotal != null ? c.calculatedLineTotal.toFixed(2) : "—"}
+                                  title={c.isOverridden ? "Manually overridden — clear to use auto-calculated value" : "Auto-calculated — type to override (e.g. for a harder window)"}
+                                  style={{
+                                    width: "100%", padding: "4px 6px 4px 18px",
+                                    fontSize: 13, fontWeight: 600,
+                                    color: c.isOverridden ? THEME.greenDark : THEME.textDark,
+                                    fontVariantNumeric: "tabular-nums",
+                                    border: `1px solid ${c.isOverridden ? THEME.green : "transparent"}`,
+                                    borderRadius: 6,
+                                    background: c.isOverridden ? THEME.greenBg : "transparent",
+                                    outline: "none",
+                                  }}
+                                />
+                              </div>
+                              <div style={{ fontSize: 10, color: THEME.textMuted, paddingLeft: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                                {c.chargedSF.toFixed(1)} SF
+                                {c.isOverridden && c.calculatedLineTotal != null && (
+                                  <span
+                                    title="Reset to auto-calculated value"
+                                    onClick={() => updateRow(row.id, "lineTotalOverride", "")}
+                                    style={{ cursor: "pointer", color: THEME.greenDark, textDecoration: "underline" }}
+                                  >
+                                    reset (calc: {fmt$(c.calculatedLineTotal)})
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{ color: "#ccc", fontSize: 12 }}>—</span>
+                          )}
+                        </div>
+                        {/* Delete */}
+                        <div style={{ padding: "5px 4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <button
+                            onClick={() => removeRow(row.id)}
+                            style={{
+                              background: "none", border: "none", cursor: "pointer",
+                              color: "#ccc", padding: 4, borderRadius: 4, lineHeight: 1,
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "#fef2f2"; e.currentTarget.style.color = "#e04d46"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "#ccc"; }}
+                          >
+                            <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <path d="M18 6L6 18M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
 
               {/* Add row */}
               <button
@@ -1541,12 +1739,16 @@ export default function PricingCalculator() {
           )}
         </div>
 
-        {/* ── RIGHT SIDEBAR ── */}
+        {/* ── RIGHT SIDEBAR (summary + actions) — beside the form on desktop,
+              stacked below it as a full-width panel on mobile/tablet ── */}
         <div style={{
-          background: THEME.white, borderLeft: `1px solid ${THEME.border}`,
-          display: "flex", flexDirection: "column", overflowY: "auto",
+          background: THEME.white,
+          borderLeft: isMobile || isTablet ? "none" : `1px solid ${THEME.border}`,
+          borderTop: isMobile || isTablet ? `1px solid ${THEME.border}` : "none",
+          display: "flex", flexDirection: "column",
+          overflowY: isMobile || isTablet ? "visible" : "auto",
         }}>
-          <div style={{ padding: "24px 20px 0" }}>
+          <div style={{ padding: isMobile ? "16px 14px 0" : "24px 20px 0" }}>
             <p style={labelSt}>Summary</p>
 
             {/* Summary card */}
@@ -1811,7 +2013,7 @@ export default function PricingCalculator() {
           </div>
 
           {/* Action buttons */}
-          <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8, marginTop: "auto" }}>
+          <div style={{ padding: isMobile ? "14px" : 16, display: "flex", flexDirection: "column", gap: 8, marginTop: "auto" }}>
             <button
               onClick={generateProposals}
               disabled={!totals.total}
