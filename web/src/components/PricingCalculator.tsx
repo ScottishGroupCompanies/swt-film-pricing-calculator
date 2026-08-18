@@ -753,7 +753,7 @@ export default function PricingCalculator() {
 
   // Editable post-calculation summary fields
   const [discountEnabled, setDiscountEnabled] = useState(false);
-  const [discountAmount, setDiscountAmount] = useState<string>("");
+  const [discountPct, setDiscountPct] = useState<string>("");
   const [feePct, setFeePct] = useState<string>(String(DEFAULT_FEE_PCT));
   const [deposit, setDeposit] = useState<string>("");
 
@@ -826,7 +826,9 @@ export default function PricingCalculator() {
 
     // Editable post-calculation summary: Film Total -> Discount -> Subtotal -> Fees -> Total Cost -> Deposit -> Balance Due
     const filmTotal = total ?? 0;
-    const discount = discountEnabled && discountAmount ? parseFloat(discountAmount) || 0 : 0;
+    // Discount is entered as a % of the Film Total (applied before the fee).
+    const discountPctNum = discountEnabled && discountPct ? parseFloat(discountPct) || 0 : 0;
+    const discount = filmTotal * (discountPctNum / 100);
     const subtotalAfterDiscount = Math.max(0, filmTotal - discount);
     const feePctNum = feePct ? parseFloat(feePct) || 0 : 0;
     const feeAmount = subtotalAfterDiscount * (feePctNum / 100);
@@ -837,9 +839,9 @@ export default function PricingCalculator() {
     return {
       totalActual, totalCharged, totalPrice, winCount, highestPg, rawTotal, total, minAdj,
       commRate, baseCommission, charged, difference, overUnderComm, totalCommission,
-      filmTotal, discount, subtotalAfterDiscount, feePctNum, feeAmount, totalCost, depositAmt, balanceDue,
+      filmTotal, discountPctNum, discount, subtotalAfterDiscount, feePctNum, feeAmount, totalCost, depositAmt, balanceDue,
     };
-  }, [lineCalcs, designer, chargedToClient, discountEnabled, discountAmount, feePct, deposit]);
+  }, [lineCalcs, designer, chargedToClient, discountEnabled, discountPct, feePct, deposit]);
 
   const proposalData = useMemo<ProposalData | null>(() => {
     if (!totals.total) return null;
@@ -967,7 +969,7 @@ export default function PricingCalculator() {
     setEstimateRecordStatus("idle");
     setEstimateRecordResult(null);
     setDiscountEnabled(false);
-    setDiscountAmount("");
+    setDiscountPct("");
     setFeePct(String(DEFAULT_FEE_PCT));
     setDeposit("");
   }
@@ -1806,7 +1808,7 @@ export default function PricingCalculator() {
                   Adjustments
                 </div>
 
-                {/* Discount / Other */}
+                {/* Discount / Other — entered as a % of the Film Total, applied before the fee */}
                 <div style={{ marginBottom: 10 }}>
                   <label style={{
                     fontSize: 11, color: THEME.textMuted, fontWeight: 500,
@@ -1818,23 +1820,29 @@ export default function PricingCalculator() {
                       onChange={(e) => setDiscountEnabled(e.target.checked)}
                       style={{ cursor: "pointer" }}
                     />
-                    Discount / Other
+                    Discount %
                   </label>
-                  <input
-                    type="number"
-                    value={discountAmount}
-                    onChange={(e) => setDiscountAmount(e.target.value)}
-                    disabled={!discountEnabled}
-                    placeholder="0.00"
-                    style={{
-                      width: "100%", padding: "7px 10px",
-                      border: `1px solid ${THEME.border}`, borderRadius: 6,
-                      background: discountEnabled ? THEME.white : THEME.lightGray,
-                      color: THEME.textDark, fontSize: 13, fontFamily: "inherit", outline: "none",
-                      fontVariantNumeric: "tabular-nums",
-                      opacity: discountEnabled ? 1 : 0.5,
-                    }}
-                  />
+                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <input
+                      type="number"
+                      value={discountPct}
+                      onChange={(e) => setDiscountPct(e.target.value)}
+                      disabled={!discountEnabled}
+                      placeholder="0"
+                      step={0.5}
+                      style={{
+                        width: "100%", padding: "7px 24px 7px 10px",
+                        border: `1px solid ${THEME.border}`, borderRadius: 6,
+                        background: discountEnabled ? THEME.white : THEME.lightGray,
+                        color: THEME.textDark, fontSize: 13, fontFamily: "inherit", outline: "none",
+                        fontVariantNumeric: "tabular-nums",
+                        opacity: discountEnabled ? 1 : 0.5,
+                      }}
+                    />
+                    <span style={{
+                      position: "absolute", right: 10, fontSize: 13, color: THEME.textMuted, pointerEvents: "none",
+                    }}>%</span>
+                  </div>
                 </div>
 
                 {discountEnabled && totals.discount > 0 && (
@@ -1842,7 +1850,7 @@ export default function PricingCalculator() {
                     display: "flex", justifyContent: "space-between",
                     padding: "3px 0", fontSize: 12, color: "#e04d46",
                   }}>
-                    <span>Discount</span>
+                    <span>{totals.discountPctNum}% of {fmt$(totals.filmTotal)}</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>−{fmt$(totals.discount)}</span>
                   </div>
                 )}
