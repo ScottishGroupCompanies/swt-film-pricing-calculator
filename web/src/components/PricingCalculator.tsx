@@ -2,13 +2,13 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect, useSyncExternalStore } from "react";
 import {
-  PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, OVER_UNDER_RATE, DEFAULT_FEE_PCT,
+  PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT,
   USERS, FILMS, BRANDS, BRAND_COLORS,
-  fmt$, fmtSF, getCommRate, calcRowGeometry, newRow, initials,
+  fmt$, fmtSF, getCommRate, getOverUnderComm, calcRowGeometry, newRow, initials,
   type User, type Film, type RowData, type RowCalc,
 } from "@/lib/pricingData";
 import {
-  buildCustomerProposal, buildInternalRecord, buildPrintableHTML,
+  buildCustomerProposal, buildInternalRecord, buildCommissionSheet, buildPrintableHTML,
   downloadFile, printHTML, type ProposalData, type ProposalLine,
 } from "@/lib/proposal";
 
@@ -740,7 +740,7 @@ export default function PricingCalculator() {
   const [opportunityNameTouched, setOpportunityNameTouched] = useState(false);
   const [minDim, setMinDim] = useState(MIN_DIM_DEFAULT);
   const [rows, setRows] = useState<RowData[]>([newRow(), newRow(), newRow()]);
-  const [activeTab, setActiveTab] = useState<"customer" | "internal">("customer");
+  const [activeTab, setActiveTab] = useState<"customer" | "internal" | "commission">("customer");
   const [showProposals, setShowProposals] = useState(false);
   const [chargedToClient, setChargedToClient] = useState<string>("");
   const [zohoStatus, setZohoStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
@@ -754,8 +754,9 @@ export default function PricingCalculator() {
   // Editable post-calculation summary fields
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountPct, setDiscountPct] = useState<string>("");
+  const [attachmentOther, setAttachmentOther] = useState<string>(""); // flat $ adjustment (e.g. "Other" line on the Film Commission sheet) — applied before the fee
   const [feePct, setFeePct] = useState<string>(String(DEFAULT_FEE_PCT));
-  const [deposit, setDeposit] = useState<string>("");
+  const [deposit, setDeposit] = useState<string>(""); 
 
   const updateRow = useCallback((id: number, field: keyof RowData, val: string | Film | number | null) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: val } : r)));
@@ -814,34 +815,42 @@ export default function PricingCalculator() {
     const total = rawTotal != null ? Math.max(rawTotal, MIN_PRICE) : null;
     const minAdj = total != null && rawTotal != null && total > rawTotal ? total - rawTotal : 0;
 
-    // V-10.8: Flat commission rate based on user, not pricing group
-    const commRate = user ? getCommRate(user) : null;
-    const baseCommission = total != null && commRate != null ? total * commRate : null;
-
-    // Over/under commission: 5% of difference between charged-to-client and calculated total
-    const charged = chargedToClient ? parseFloat(chargedToClient) : null;
-    const difference = charged != null && total != null ? charged - total : 0;
-    const overUnderComm = difference > 0 ? difference * OVER_UNDER_RATE : 0;
-    const totalCommission = baseCommission != null ? baseCommission + overUnderComm : null;
-
-    // Editable post-calculation summary: Film Total -> Discount -> Subtotal -> Fees -> Total Cost -> Deposit -> Balance Due
+    // Editable post-calculation summary: Film Total -> Discount -> Attachment/Other -> Subtotal -> Fees -> Total Cost -> Deposit -> Balance Due
     const filmTotal = total ?? 0;
     // Discount is entered as a % of the Film Total (applied before the fee).
     const discountPctNum = discountEnabled && discountPct ? parseFloat(discountPct) || 0 : 0;
     const discount = filmTotal * (discountPctNum / 100);
-    const subtotalAfterDiscount = Math.max(0, filmTotal - discount);
+    // Attachment/Other is a flat $ adjustment (matches the "Other" line on the
+    // Film Commission sheet) — applied after the discount, before the fee.
+    // Enter a negative number for a deduction (e.g. -1904.17), positive for an add-on.
+    const attachmentOtherAmt = attachmentOther ? parseFloat(attachmentOther) || 0 : 0;
+    const subtotalAfterDiscount = Math.max(0, filmTotal - discount + attachmentOtherAmt);
     const feePctNum = feePct ? parseFloat(feePct) || 0 : 0;
     const feeAmount = subtotalAfterDiscount * (feePctNum / 100);
     const totalCost = subtotalAfterDiscount + feeAmount;
     const depositAmt = deposit ? parseFloat(deposit) || 0 : 0;
     const balanceDue = totalCost - depositAmt;
 
+    // Commission — matches the Film Commission sheet exactly:
+    //   Base commission = user's rate x Subtotal (Film Total after discount + Attachment/Other, before the fee)
+    //   Difference = Charged to Client - Total Cost
+    //   If Difference > 0 (overcharged the client): Over/Under = Difference x the user's own commission rate
+    //   If Difference <= 0 (undercharged / a loss): Over/Under = Difference x 0.5 (a 50/50 split of the loss with the company)
+    //   Total Commission = Base + Over/Under
+    const commRate = user ? getCommRate(user) : null;
+    const baseCommission = commRate != null ? subtotalAfterDiscount * commRate : null;
+
+    const charged = chargedToClient ? parseFloat(chargedToClient) : null;
+    const difference = charged != null ? charged - totalCost : 0;
+    const overUnderComm = getOverUnderComm(difference, commRate);
+    const totalCommission = baseCommission != null ? baseCommission + overUnderComm : null;
+
     return {
       totalActual, totalCharged, totalPrice, winCount, highestPg, rawTotal, total, minAdj,
       commRate, baseCommission, charged, difference, overUnderComm, totalCommission,
-      filmTotal, discountPctNum, discount, subtotalAfterDiscount, feePctNum, feeAmount, totalCost, depositAmt, balanceDue,
+      filmTotal, discountPctNum, discount, attachmentOtherAmt, subtotalAfterDiscount, feePctNum, feeAmount, totalCost, depositAmt, balanceDue,
     };
-  }, [lineCalcs, user, chargedToClient, discountEnabled, discountPct, feePct, deposit]);
+  }, [lineCalcs, user, chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit]);
 
   const proposalData = useMemo<ProposalData | null>(() => {
     if (!totals.total) return null;
@@ -885,6 +894,7 @@ export default function PricingCalculator() {
       minDim,
       // Editable summary breakdown
       discount: totals.discount,
+      attachmentOther: totals.attachmentOtherAmt,
       subtotalAfterDiscount: totals.subtotalAfterDiscount,
       feePct: totals.feePctNum,
       feeAmount: totals.feeAmount,
@@ -920,6 +930,14 @@ export default function PricingCalculator() {
 
   function handlePrint() {
     if (!proposalData) return;
+    if (activeTab === "commission") {
+      // The branded customer template doesn't have commission fields — print
+      // the plain-text Commission Sheet in a simple monospace wrapper instead.
+      const text = buildCommissionSheet(proposalData);
+      const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      printHTML(`<pre style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; padding: 24px;">${escaped}</pre>`);
+      return;
+    }
     printHTML(buildPrintableHTML(proposalData));
   }
 
@@ -927,13 +945,23 @@ export default function PricingCalculator() {
     if (!proposalData) return;
     const text = activeTab === "customer"
       ? buildCustomerProposal(proposalData)
-      : buildInternalRecord(proposalData);
+      : activeTab === "internal"
+        ? buildInternalRecord(proposalData)
+        : buildCommissionSheet(proposalData);
     const filename = `SWT-${(customer || "proposal").replace(/\s+/g, "-")}-${activeTab}.txt`;
     downloadFile(filename, text, "text/plain");
   }
 
   function handleDownloadHTML() {
     if (!proposalData) return;
+    if (activeTab === "commission") {
+      const text = buildCommissionSheet(proposalData);
+      const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const html = `<pre style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; padding: 24px;">${escaped}</pre>`;
+      const filename = `SWT-${(customer || "proposal").replace(/\s+/g, "-")}-commission.html`;
+      downloadFile(filename, html, "text/html");
+      return;
+    }
     const html = buildPrintableHTML(proposalData);
     const filename = `SWT-${(customer || "proposal").replace(/\s+/g, "-")}.html`;
     downloadFile(filename, html, "text/html");
@@ -970,6 +998,7 @@ export default function PricingCalculator() {
     setEstimateRecordResult(null);
     setDiscountEnabled(false);
     setDiscountPct("");
+    setAttachmentOther("");
     setFeePct(String(DEFAULT_FEE_PCT));
     setDeposit("");
   }
@@ -1700,14 +1729,14 @@ export default function PricingCalculator() {
                   <button onClick={handlePrint} style={smallBtnSt}>🖨 Print</button>
                   <button onClick={handleDownloadHTML} style={smallBtnSt}>📄 HTML</button>
                   <button onClick={handleDownloadText} style={smallBtnSt}>
-                    📝 {activeTab === "customer" ? "Customer" : "Internal"} .txt
+                    📝 {activeTab === "customer" ? "Customer" : activeTab === "internal" ? "Internal" : "Commission"} .txt
                   </button>
                 </div>
               </div>
 
               {/* Tabs */}
               <div style={{ display: "flex", padding: "0 24px", borderBottom: `1px solid ${THEME.border}` }}>
-                {(["customer", "internal"] as const).map((t) => (
+                {(["customer", "internal", "commission"] as const).map((t) => (
                   <button
                     key={t}
                     onClick={() => setActiveTab(t)}
@@ -1721,7 +1750,7 @@ export default function PricingCalculator() {
                       textTransform: "capitalize",
                     }}
                   >
-                    {t === "customer" ? "Customer Proposal" : "Internal Record"}
+                    {t === "customer" ? "Customer Proposal" : t === "internal" ? "Internal Record" : "Commission Sheet"}
                   </button>
                 ))}
               </div>
@@ -1735,7 +1764,9 @@ export default function PricingCalculator() {
               }}>
                 {activeTab === "customer"
                   ? buildCustomerProposal(proposalData)
-                  : buildInternalRecord(proposalData)}
+                  : activeTab === "internal"
+                    ? buildInternalRecord(proposalData)
+                    : buildCommissionSheet(proposalData)}
               </div>
             </section>
           )}
@@ -1852,6 +1883,42 @@ export default function PricingCalculator() {
                   }}>
                     <span>{totals.discountPctNum}% of {fmt$(totals.filmTotal)}</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>−{fmt$(totals.discount)}</span>
+                  </div>
+                )}
+
+                {/* Attachment / Other — flat $ adjustment (matches the Film Commission sheet's "Other" line). Use a negative number for a deduction. */}
+                <div style={{ marginBottom: 10, marginTop: 6 }}>
+                  <label style={{
+                    fontSize: 11, color: THEME.textMuted, fontWeight: 500,
+                    display: "block", marginBottom: 4,
+                  }}>
+                    Attachment / Other ($)
+                  </label>
+                  <input
+                    type="number"
+                    value={attachmentOther}
+                    onChange={(e) => setAttachmentOther(e.target.value)}
+                    placeholder="0.00 (negative = deduction)"
+                    step={0.01}
+                    style={{
+                      width: "100%", padding: "7px 10px",
+                      border: `1px solid ${THEME.border}`, borderRadius: 6,
+                      background: THEME.white, color: THEME.textDark,
+                      fontSize: 13, fontFamily: "inherit", outline: "none",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  />
+                </div>
+
+                {totals.attachmentOtherAmt !== 0 && (
+                  <div style={{
+                    display: "flex", justifyContent: "space-between",
+                    padding: "3px 0", fontSize: 12, color: totals.attachmentOtherAmt < 0 ? "#e04d46" : THEME.textMuted,
+                  }}>
+                    <span>Attachment / Other</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {totals.attachmentOtherAmt >= 0 ? "+" : "−"}{fmt$(Math.abs(totals.attachmentOtherAmt))}
+                    </span>
                   </div>
                 )}
 
@@ -1981,19 +2048,25 @@ export default function PricingCalculator() {
                     display: "flex", justifyContent: "space-between",
                     padding: "3px 0", fontSize: 12, color: THEME.greenDark,
                   }}>
-                    <span>{(totals.commRate! * 100).toFixed(0)}% of {fmt$(totals.total)}</span>
+                    <span>{(totals.commRate! * 100).toFixed(0)}% of {fmt$(totals.subtotalAfterDiscount)}</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt$(totals.baseCommission)}</span>
                   </div>
                 )}
 
-                {/* Over/under line */}
-                {totals.overUnderComm > 0 && (
+                {/* Over/under line — overcharge: user's own rate on the overage; undercharge/loss: 50/50 split with the company */}
+                {totals.overUnderComm !== 0 && (
                   <div style={{
                     display: "flex", justifyContent: "space-between",
-                    padding: "3px 0", fontSize: 12, color: THEME.greenDark,
+                    padding: "3px 0", fontSize: 12, color: totals.overUnderComm < 0 ? "#e04d46" : THEME.greenDark,
                   }}>
-                    <span>5% of overage ({fmt$(totals.difference)})</span>
-                    <span style={{ fontVariantNumeric: "tabular-nums" }}>+{fmt$(totals.overUnderComm)}</span>
+                    <span>
+                      {totals.difference > 0
+                        ? `${(totals.commRate! * 100).toFixed(0)}% of overage (${fmt$(totals.difference)})`
+                        : `50/50 split of loss (${fmt$(totals.difference)})`}
+                    </span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {totals.overUnderComm >= 0 ? "+" : "−"}{fmt$(Math.abs(totals.overUnderComm))}
+                    </span>
                   </div>
                 )}
 

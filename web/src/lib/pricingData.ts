@@ -12,9 +12,11 @@ export const MIN_PRICE = 250;
 export const MIN_DIM_DEFAULT = 8;
 export const DEFAULT_FEE_PCT = 4; // 4% fee (editable per job)
 
-// V-10.9: Flat commission rate per user (no more tiered table)
-// Plus 5% on over/under (difference between charged-to-client and calculated price)
-export const OVER_UNDER_RATE = 0.05;
+// Commission: base commission = user's flat rate x Subtotal (Film Total minus
+// discount, before the fee). Over/Under adjustment: if the rep charged the
+// client MORE than Total Cost, they earn their own rate on the overage; if
+// they charged LESS (a loss), the loss is split 50/50 with the company —
+// see getOverUnderComm() below. Matches the "Film Commission" sheet exactly.
 
 export interface User {
   id: string;
@@ -370,6 +372,14 @@ export function getRoll(w: number): number {
 export function getCommRate(user: User | null): number | null {
   if (!user) return null;
   return user.filmRate;
+}
+
+// Over/Under adjustment on the base commission, matching the "Film Commission"
+// sheet exactly: overcharge the client -> the rep earns their own rate on the
+// overage; undercharge (a loss) -> the loss is split 50/50 with the company.
+export function getOverUnderComm(difference: number, commRate: number | null): number {
+  if (commRate == null) return 0;
+  return difference > 0 ? difference * commRate : difference * 0.5;
 }
 
 export interface RowData {

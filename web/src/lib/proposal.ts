@@ -41,6 +41,7 @@ export interface ProposalData {
   minDim: number;
   // Editable post-calculation summary
   discount?: number;
+  attachmentOther?: number;
   subtotalAfterDiscount?: number;
   feePct?: number;
   feeAmount?: number;
@@ -324,9 +325,11 @@ export function buildInternalRecord(d: ProposalData): string {
   ).join("\n");
 
   const commBreakdown = d.baseCommission != null
-    ? `  Base commission: ${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% of ${fmt$(d.total)} = ${fmt$(d.baseCommission)}\n` +
-      (d.overUnderComm > 0
-        ? `  Over/under: 5% of ${fmt$(d.difference)} overage = ${fmt$(d.overUnderComm)}\n`
+    ? `  Base commission: ${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% of ${fmt$(d.subtotalAfterDiscount ?? d.total)} = ${fmt$(d.baseCommission)}\n` +
+      (d.overUnderComm !== 0
+        ? d.difference > 0
+          ? `  Over/under: ${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% of ${fmt$(d.difference)} overage = +${fmt$(d.overUnderComm)}\n`
+          : `  Over/under: 50/50 split of −${fmt$(Math.abs(d.difference))} loss = −${fmt$(Math.abs(d.overUnderComm))}\n`
         : "") +
       `  Total commission: ${d.commission != null ? fmt$(d.commission) : "—"}`
     : `  Commission: N/A (no user selected)`;
@@ -340,6 +343,7 @@ export function buildInternalRecord(d: ProposalData): string {
   const adjustmentBreakdown =
     `  Film Total: ${fmt$(d.total)}\n` +
     (d.discount && d.discount > 0 ? `  Discount: −${fmt$(d.discount)}\n` : "") +
+    (d.attachmentOther ? `  Attachment/Other: ${d.attachmentOther >= 0 ? "+" : "−"}${fmt$(Math.abs(d.attachmentOther))}\n` : "") +
     (d.feeAmount != null ? `  Fee (${d.feePct ?? 4}%): +${fmt$(d.feeAmount)}\n` : "") +
     `  Total Cost: ${fmt$(d.totalCost ?? d.total)}\n` +
     (d.deposit && d.deposit > 0 ? `  Deposit: −${fmt$(d.deposit)}\n  Balance Due: ${fmt$(d.balanceDue ?? d.totalCost ?? d.total)}` : "");
@@ -365,6 +369,59 @@ ${adjustmentBreakdown}
 
 COMMISSION:
 ${commBreakdown}`;
+}
+
+export function buildCommissionSheet(d: ProposalData): string {
+  // Same window/film/quantity listing as the proposal, but no customer-facing
+  // pricing — just what film, how much, and the roll it comes from. Purely
+  // for the rep/company to verify the line items behind the commission math.
+  const lines = d.lines.map((l, i) =>
+    `  ${i + 1}. ${l.desc} — ${l.dims} (qty ${l.qty}) | Film: ${l.film || "—"} (${l.brand || "—"}) | ${l.rollW}" roll | ${l.chargedSF?.toFixed(2)} charged SF`
+  ).join("\n");
+
+  const contactLines = [
+    d.cityStateZip ? `City/State/Zip: ${d.cityStateZip}` : null,
+    d.phone ? `Phone: ${d.phone}` : null,
+    d.email ? `Email: ${d.email}` : null,
+  ].filter(Boolean).join("\n");
+
+  const subtotal = d.subtotalAfterDiscount ?? d.total;
+  const totalCost = d.totalCost ?? d.total;
+
+  const financials =
+    `  Film Total: ${fmt$(d.total)}\n` +
+    (d.discount && d.discount > 0 ? `  Discount: −${fmt$(d.discount)}\n` : "") +
+    (d.attachmentOther ? `  Attachment / Other: ${d.attachmentOther >= 0 ? "+" : "−"}${fmt$(Math.abs(d.attachmentOther))}\n` : "") +
+    `  Subtotal: ${fmt$(subtotal)}\n` +
+    `  ${d.feePct ?? 4}% Fee: +${fmt$(d.feeAmount ?? 0)}\n` +
+    `  Total Cost: ${fmt$(totalCost)}\n` +
+    (d.deposit && d.deposit > 0 ? `  Deposit: −${fmt$(d.deposit)}\n  Balance Due: ${fmt$(d.balanceDue ?? totalCost)}\n` : "");
+
+  const commissionSection = d.baseCommission != null
+    ? `  Charged to Client: ${d.chargedToClient != null ? fmt$(d.chargedToClient) : "—"}\n` +
+      `  Difference: ${d.difference >= 0 ? "+" : "−"}${fmt$(Math.abs(d.difference))}\n` +
+      `  ${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% Commission on Sale: ${fmt$(d.baseCommission)}\n` +
+      (d.overUnderComm !== 0
+        ? d.difference > 0
+          ? `  Commission Over/Under (${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% of overage): +${fmt$(d.overUnderComm)}\n`
+          : `  Commission Over/Under (50/50 split of loss): −${fmt$(Math.abs(d.overUnderComm))}\n`
+        : `  Commission Over/Under: $0.00\n`) +
+      `  Total Commission: ${d.commission != null ? fmt$(d.commission) : "—"}`
+    : `  No user selected — cannot calculate commission.`;
+
+  return `COMMISSION SHEET — ${d.date}
+
+Customer: ${d.customer || "—"}
+Address: ${d.address || "—"}
+${contactLines ? contactLines + "\n" : ""}Sales Rep: ${d.userName || "—"} (${d.userLoc || "—"})
+
+WINDOW / FILM LINE ITEMS:
+${lines}
+
+FINANCIALS:
+${financials}
+COMMISSION:
+${commissionSection}`;
 }
 
 export function downloadFile(filename: string, content: string, mime: string) {
