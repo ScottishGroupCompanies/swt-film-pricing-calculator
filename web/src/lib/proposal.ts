@@ -22,8 +22,8 @@ export interface ProposalData {
   cityStateZip?: string;
   phone?: string;
   email?: string;
-  designerName: string;
-  designerLoc: string;
+  userName: string;
+  userLoc: string;
   date: string;
   lines: ProposalLine[];
   totalActual: number;
@@ -226,7 +226,7 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
     </div>
     <div class="meta-table">
       <div><span>Quote Date :</span><span>${d.date}</span></div>
-      <div><span>Sales person :</span><span>${d.designerName || "—"}</span></div>
+      <div><span>Sales person :</span><span>${d.userName || "—"}</span></div>
       <div><span>Payment Terms :</span><span>Upon completion</span></div>
     </div>
   </div>
@@ -301,7 +301,7 @@ PROPOSAL — ${d.date}
 
 Customer: ${d.customer || "—"}
 Job Address: ${d.address || "—"}${contactLines ? `\n${contactLines}` : ""}
-Designer: ${d.designerName || "—"} (${d.designerLoc || "—"})
+User: ${d.userName || "—"} (${d.userLoc || "—"})
 
 LINE ITEMS:
 ${lines}
@@ -310,7 +310,7 @@ ${minNote}
 
 This proposal is valid for 30 days from the date above.
 Pricing includes professional installation of premium window film.
-Contact your designer to proceed or request modifications.`;
+Contact your sales representative to proceed or request modifications.`;
 }
 
 export function buildInternalRecord(d: ProposalData): string {
@@ -329,7 +329,7 @@ export function buildInternalRecord(d: ProposalData): string {
         ? `  Over/under: 5% of ${fmt$(d.difference)} overage = ${fmt$(d.overUnderComm)}\n`
         : "") +
       `  Total commission: ${d.commission != null ? fmt$(d.commission) : "—"}`
-    : `  Commission: N/A (no designer selected)`;
+    : `  Commission: N/A (no user selected)`;
 
   const contactLines = [
     d.cityStateZip ? `City/State/Zip: ${d.cityStateZip}` : null,
@@ -348,7 +348,7 @@ export function buildInternalRecord(d: ProposalData): string {
 
 Customer: ${d.customer || "—"}
 Address: ${d.address || "—"}
-${contactLines ? contactLines + "\n" : ""}Designer: ${d.designerName || "—"} (${d.designerLoc || "—"})
+${contactLines ? contactLines + "\n" : ""}User: ${d.userName || "—"} (${d.userLoc || "—"})
 Min dimension: ${d.minDim}" | Min job price: $${MIN_PRICE}
 
 LINE ITEMS:

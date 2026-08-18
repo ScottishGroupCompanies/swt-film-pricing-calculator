@@ -12,27 +12,24 @@ export const MIN_PRICE = 250;
 export const MIN_DIM_DEFAULT = 8;
 export const DEFAULT_FEE_PCT = 4; // 4% fee (editable per job)
 
-// V-10.9: Flat commission rate per designer (no more tiered table)
+// V-10.9: Flat commission rate per user (no more tiered table)
 // Plus 5% on over/under (difference between charged-to-client and calculated price)
 export const OVER_UNDER_RATE = 0.05;
 
-export interface Designer {
+export interface User {
   id: string;
   name: string;
   loc: string;
   glassRate: number | null;
-  filmRate: number | null; // flat commission rate on film sale total — null when not yet set in the source sheet
+  filmRate: number | null; // flat commission rate on film sale total
 }
 
-export const DESIGNERS: Designer[] = [
-  { id: "dana",   name: "Dana",   loc: "Colorado",    glassRate: 0,    filmRate: 0.07 },
-  { id: "amy",    name: "Amy",    loc: "Texas",       glassRate: 0,    filmRate: 0.05 },
-  { id: "blake",  name: "Blake",  loc: "KS/MO",       glassRate: null, filmRate: 0.15 },
-  { id: "scott",  name: "Scott",  loc: "Utah",        glassRate: null, filmRate: 0.15 },
-  { id: "katie",  name: "Katie",  loc: "Arizona",     glassRate: null, filmRate: null },
-  { id: "mike",   name: "Mike",   loc: "Tennessee",   glassRate: null, filmRate: null },
-  { id: "martin", name: "Martin", loc: "Georgia",     glassRate: null, filmRate: null },
-  { id: "john",   name: "John",   loc: "California",  glassRate: null, filmRate: 0.15 },
+export const USERS: User[] = [
+  { id: "dana",  name: "Dana",  loc: "Colorado",  glassRate: 0,    filmRate: 0.07 },
+  { id: "amy",   name: "Amy",   loc: "Texas",     glassRate: 0,    filmRate: 0.05 },
+  { id: "blake", name: "Blake", loc: "KS/MO",     glassRate: null, filmRate: 0.15 },
+  { id: "katie", name: "Katie", loc: "Arizona",   glassRate: null, filmRate: 0 },
+  { id: "mike",  name: "Mike",  loc: "Tennessee", glassRate: null, filmRate: 0 },
 ];
 
 export interface Film {
@@ -369,13 +366,10 @@ export function getRoll(w: number): number {
   return ROLL_WIDTHS[ROLL_WIDTHS.length - 1];
 }
 
-// V-10.9: Commission is a flat rate per designer, not tiered by pricing group.
-// Returns null when the designer has no filmRate set yet (e.g. Katie/Mike/Martin
-// in the source sheet don't have a rate assigned) so callers can show "N/A"
-// instead of silently treating it as 0%.
-export function getCommRate(designer: Designer | null): number | null {
-  if (!designer) return null;
-  return designer.filmRate;
+// V-10.9: Commission is a flat rate per user, not tiered by pricing group.
+export function getCommRate(user: User | null): number | null {
+  if (!user) return null;
+  return user.filmRate;
 }
 
 export interface RowData {

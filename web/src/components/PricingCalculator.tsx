@@ -3,9 +3,9 @@
 import { useState, useCallback, useMemo, useRef, useEffect, useSyncExternalStore } from "react";
 import {
   PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, OVER_UNDER_RATE, DEFAULT_FEE_PCT,
-  DESIGNERS, FILMS, BRANDS, BRAND_COLORS,
+  USERS, FILMS, BRANDS, BRAND_COLORS,
   fmt$, fmtSF, getCommRate, calcRowGeometry, newRow, initials,
-  type Designer, type Film, type RowData, type RowCalc,
+  type User, type Film, type RowData, type RowCalc,
 } from "@/lib/pricingData";
 import {
   buildCustomerProposal, buildInternalRecord, buildPrintableHTML,
@@ -350,11 +350,11 @@ function FilmPicker({
 
 // ─── DESIGNER PICKER (portal dropdown) ────────────────────────────────────
 
-function DesignerPicker({
-  designer, onSelect,
+function UserPicker({
+  user, onSelect,
 }: {
-  designer: Designer | null;
-  onSelect: (d: Designer) => void;
+  user: User | null;
+  onSelect: (d: User) => void;
 }) {
   const { isMobile } = useBreakpoint();
   const [open, setOpen] = useState(false);
@@ -404,29 +404,29 @@ function DesignerPicker({
         onClick={() => setOpen((o) => !o)}
         style={{
           display: "flex", alignItems: "center", gap: 8,
-          background: designer ? THEME.white : THEME.green,
-          border: `1px solid ${designer ? THEME.border : THEME.greenDark}`,
+          background: user ? THEME.white : THEME.green,
+          border: `1px solid ${user ? THEME.border : THEME.greenDark}`,
           borderRadius: 8, padding: "5px 12px 5px 5px", cursor: "pointer",
-          color: designer ? THEME.textDark : "#fff",
+          color: user ? THEME.textDark : "#fff",
           fontFamily: "inherit", fontSize: 13, fontWeight: 500,
           transition: "all 0.15s", maxWidth: isMobile ? 150 : undefined,
         }}
       >
         <div style={{
           width: 28, height: 28, borderRadius: "50%",
-          background: designer ? THEME.green : "rgba(255,255,255,0.25)",
+          background: user ? THEME.green : "rgba(255,255,255,0.25)",
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 10, fontWeight: 700,
           color: "#fff", flexShrink: 0,
         }}>
-          {designer ? initials(designer.name) : "?"}
+          {user ? initials(user.name) : "?"}
         </div>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {designer ? designer.name : "Select designer"}
+          {user ? user.name : "Select user"}
         </span>
-        {designer && !isMobile && (
+        {user && !isMobile && (
           <span style={{ fontSize: 11, color: THEME.textMuted, fontWeight: 400 }}>
-            · {designer.loc}
+            · {user.loc}
           </span>
         )}
         <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
@@ -444,18 +444,18 @@ function DesignerPicker({
             maxHeight: 400, overflowY: "auto", padding: 6,
           }}
         >
-          {DESIGNERS.map((d) => (
+          {USERS.map((d) => (
             <div
               key={d.id}
               onClick={() => { onSelect(d); setOpen(false); }}
               style={{
                 display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
                 borderRadius: 8, cursor: "pointer",
-                background: designer?.id === d.id ? THEME.greenBg : "transparent",
+                background: user?.id === d.id ? THEME.greenBg : "transparent",
                 transition: "background 0.1s",
               }}
-              onMouseEnter={(e) => { if (designer?.id !== d.id) e.currentTarget.style.background = THEME.lightGray; }}
-              onMouseLeave={(e) => { if (designer?.id !== d.id) e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={(e) => { if (user?.id !== d.id) e.currentTarget.style.background = THEME.lightGray; }}
+              onMouseLeave={(e) => { if (user?.id !== d.id) e.currentTarget.style.background = "transparent"; }}
             >
               <div style={{
                 width: 34, height: 34, borderRadius: "50%", background: THEME.green,
@@ -468,10 +468,10 @@ function DesignerPicker({
                 <div style={{ fontSize: 13, fontWeight: 500, color: THEME.textDark }}>{d.name}</div>
                 <div style={{ fontSize: 11, color: THEME.textMuted }}>
                   {d.loc}
-                  {d.glassRate != null ? ` · ${Math.round(d.glassRate * 100)}% glass commission` : ""}
+                  {d.glassRate ? ` · ${Math.round(d.glassRate * 100)}% glass commission` : ""}
                 </div>
               </div>
-              {designer?.id === d.id && (
+              {user?.id === d.id && (
                 <svg width="16" height="16" fill="none" stroke={THEME.green} strokeWidth="2.5" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
                   <path d="M5 13l4 4L19 7" />
                 </svg>
@@ -718,7 +718,7 @@ export default function PricingCalculator() {
     if (isTablet) return n === 3 ? "1fr 1fr" : "1fr 1fr";
     return n === 3 ? "1fr 1fr 1fr" : "1fr 1fr";
   };
-  const [designer, setDesigner] = useState<Designer | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [customer, setCustomer] = useState("");
   const [address, setAddress] = useState("");
   const [cityStateZip, setCityStateZip] = useState("");
@@ -814,8 +814,8 @@ export default function PricingCalculator() {
     const total = rawTotal != null ? Math.max(rawTotal, MIN_PRICE) : null;
     const minAdj = total != null && rawTotal != null && total > rawTotal ? total - rawTotal : 0;
 
-    // V-10.8: Flat commission rate based on designer, not pricing group
-    const commRate = designer ? getCommRate(designer) : null;
+    // V-10.8: Flat commission rate based on user, not pricing group
+    const commRate = user ? getCommRate(user) : null;
     const baseCommission = total != null && commRate != null ? total * commRate : null;
 
     // Over/under commission: 5% of difference between charged-to-client and calculated total
@@ -841,7 +841,7 @@ export default function PricingCalculator() {
       commRate, baseCommission, charged, difference, overUnderComm, totalCommission,
       filmTotal, discountPctNum, discount, subtotalAfterDiscount, feePctNum, feeAmount, totalCost, depositAmt, balanceDue,
     };
-  }, [lineCalcs, designer, chargedToClient, discountEnabled, discountPct, feePct, deposit]);
+  }, [lineCalcs, user, chargedToClient, discountEnabled, discountPct, feePct, deposit]);
 
   const proposalData = useMemo<ProposalData | null>(() => {
     if (!totals.total) return null;
@@ -866,8 +866,8 @@ export default function PricingCalculator() {
 
     return {
       customer, address, cityStateZip, phone, email,
-      designerName: designer?.name || "",
-      designerLoc: designer?.loc || "",
+      userName: user?.name || "",
+      userLoc: user?.loc || "",
       date: new Date().toLocaleDateString(),
       lines,
       totalActual: totals.totalActual,
@@ -906,7 +906,7 @@ export default function PricingCalculator() {
       opportunityName: effectiveOpportunityName,
     };
   }, [
-    rows, lineCalcs, totals, customer, address, cityStateZip, phone, email, designer, minDim,
+    rows, lineCalcs, totals, customer, address, cityStateZip, phone, email, user, minDim,
     jobType, companyName, companyAddress, companyCityStateZip, companyPhone, companyEmail,
     contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
     effectiveOpportunityName,
@@ -983,7 +983,7 @@ export default function PricingCalculator() {
   }, []);
 
   async function submitToZoho() {
-    if (!proposalData || !designer) return;
+    if (!proposalData || !user) return;
     setZohoStatus("submitting");
     setZohoResult(null);
 
@@ -1064,7 +1064,7 @@ export default function PricingCalculator() {
           companyCityStateZip: proposalData.companyCityStateZip,
           companyPhone: proposalData.companyPhone,
           companyEmail: proposalData.companyEmail,
-          designerName: proposalData.designerName,
+          userName: proposalData.userName,
           feeAmount: proposalData.feeAmount,
           feePct: proposalData.feePct,
           lines: proposalData.lines,
@@ -1149,8 +1149,8 @@ export default function PricingCalculator() {
             </div>
           )}
 
-          {/* Designer picker */}
-          <DesignerPicker designer={designer} onSelect={setDesigner} />
+          {/* User picker */}
+          <UserPicker user={user} onSelect={setUser} />
         </div>
       </header>
 
@@ -1940,7 +1940,7 @@ export default function PricingCalculator() {
             )}
 
             {/* Charged to Client + Commission card */}
-            {totals.total != null && designer && (
+            {totals.total != null && user && (
               <div style={{
                 background: THEME.greenBg, border: `1px solid ${THEME.greenBorder}`,
                 borderRadius: 10, padding: "14px 16px", marginBottom: 14,
@@ -2054,24 +2054,24 @@ export default function PricingCalculator() {
             {zohoEnabled && (
               <div style={{ marginTop: 4 }}>
                 <div style={{ height: 1, background: THEME.border, margin: "8px 0" }} />
-                {(!totals.total || !designer) && (
+                {(!totals.total || !user) && (
                   <div style={{
                     padding: "6px 10px", background: THEME.lightGray, borderRadius: 6,
                     fontSize: 10, color: THEME.textMuted, textAlign: "center", marginBottom: 6,
                   }}>
-                    {!designer ? "Select a designer to enable Zoho send" : "Add at least one priced window to enable Zoho send"}
+                    {!user ? "Select a user to enable Zoho send" : "Add at least one priced window to enable Zoho send"}
                   </div>
                 )}
                 {zohoStatus === "idle" && (
                   <button
                     onClick={submitToZoho}
-                    disabled={!totals.total || !designer}
+                    disabled={!totals.total || !user}
                     style={{
                       width: "100%", padding: 10,
-                      background: (!totals.total || !designer) ? THEME.lightGray : THEME.darkGray,
-                      color: (!totals.total || !designer) ? THEME.textMuted : "#fff",
+                      background: (!totals.total || !user) ? THEME.lightGray : THEME.darkGray,
+                      color: (!totals.total || !user) ? THEME.textMuted : "#fff",
                       border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                      cursor: (!totals.total || !designer) ? "not-allowed" : "pointer",
+                      cursor: (!totals.total || !user) ? "not-allowed" : "pointer",
                       fontFamily: "inherit",
                     }}
                   >

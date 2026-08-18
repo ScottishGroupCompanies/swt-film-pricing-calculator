@@ -33,8 +33,8 @@ interface PricingLineItem {
 interface SubmitPricingRequest {
   customer: string;
   address: string;
-  designerName: string;
-  designerLoc: string;
+  userName: string;
+  userLoc: string;
   date: string;
   lines: PricingLineItem[];
   totalActual: number;
@@ -96,9 +96,9 @@ export async function POST(request: NextRequest) {
     const body: SubmitPricingRequest = await request.json();
 
     // Validate required fields
-    if (!body.customer || !body.designerName || !body.total) {
+    if (!body.customer || !body.userName || !body.total) {
       return NextResponse.json(
-        { success: false, error: "Missing required fields: customer, designerName, and total are required." },
+        { success: false, error: "Missing required fields: customer, userName, and total are required." },
         { status: 400 }
       );
     }
@@ -205,7 +205,7 @@ export async function POST(request: NextRequest) {
         amount: body.chargedToClient || body.totalCost || body.total,
         stage: "Qualification",
         description: dealDescription,
-        designerName: body.designerName,
+        userName: body.userName,
         jobType: body.jobType,
         installationStreet: body.address,
         installationCity: installCity,
@@ -241,8 +241,8 @@ export async function POST(request: NextRequest) {
           City_State_Zip: body.cityStateZip || "",
           Phone: body.phone || "",
           Email: body.email || "",
-          Designer: body.designerName,
-          Location: body.designerLoc,
+          User: body.userName,
+          Location: body.userLoc,
           Total_SqFt_Actual: body.totalActual.toFixed(2),
           Total_SqFt_Charged: body.totalCharged.toFixed(2),
           Subtotal: body.subtotal.toFixed(2),
@@ -295,7 +295,7 @@ function buildDealDescription(data: SubmitPricingRequest): string {
   ).join("\n");
 
   return `Window Film Pricing — ${data.date}
-Designer: ${data.designerName} (${data.designerLoc})
+User: ${data.userName} (${data.userLoc})
 Job Type: ${data.jobType || "Residential"}
 Customer: ${data.customer}${data.jobType === "Commercial" && data.companyName ? ` | Business: ${data.companyName}` : ""}${data.jobType === "Commercial" && data.contactPersonName ? ` | Contact: ${data.contactPersonName}` : ""}
 Address: ${data.address}${data.cityStateZip ? `, ${data.cityStateZip}` : ""}
@@ -323,7 +323,7 @@ function buildNoteContent(data: SubmitPricingRequest): string {
 
 Customer: ${data.customer}
 Address: ${data.address}${data.cityStateZip ? `, ${data.cityStateZip}` : ""}
-${data.phone ? `Phone: ${data.phone}\n` : ""}${data.email ? `Email: ${data.email}\n` : ""}Designer: ${data.designerName} (${data.designerLoc})
+${data.phone ? `Phone: ${data.phone}\n` : ""}${data.email ? `Email: ${data.email}\n` : ""}User: ${data.userName} (${data.userLoc})
 Min dimension: ${data.minDim}"
 
 LINE ITEMS:

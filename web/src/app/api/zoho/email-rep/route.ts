@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createTransport, type Transporter } from "nodemailer";
 
 interface EmailRepRequest {
-  designerName: string;
+  userName: string;
   customer: string;
   dealId?: string | null;
   contactId?: string | null;
@@ -53,8 +53,8 @@ function getTransporter(): Transporter {
   return transporter;
 }
 
-function getRepEmail(designerName: string): string | null {
-  const name = designerName.toLowerCase();
+function getRepEmail(userName: string): string | null {
+  const name = userName.toLowerCase();
   if (name === "amy") return process.env.REP_EMAIL_AMY || null;
   if (name === "blake") return process.env.REP_EMAIL_BLAKE || null;
   return null;
@@ -64,17 +64,17 @@ export async function POST(request: NextRequest) {
   try {
     const body: EmailRepRequest = await request.json();
 
-    if (!body.designerName || !body.customer) {
+    if (!body.userName || !body.customer) {
       return NextResponse.json(
-        { success: false, error: "Missing designerName and customer" },
+        { success: false, error: "Missing userName and customer" },
         { status: 400 }
       );
     }
 
-    const repEmail = getRepEmail(body.designerName);
+    const repEmail = getRepEmail(body.userName);
     if (!repEmail) {
       return NextResponse.json(
-        { success: false, error: `No email configured for designer: ${body.designerName}` },
+        { success: false, error: `No email configured for user: ${body.userName}` },
         { status: 400 }
       );
     }
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
         
         <div style="background: #f7f8f5; padding: 24px; border-radius: 0 0 10px 10px; border: 1px solid #e5e7eb;">
           <p style="font-size: 15px; color: #3a3b3a; line-height: 1.6;">
-            Hi ${body.designerName},
+            Hi ${body.userName},
           </p>
           
           <p style="font-size: 15px; color: #3a3b3a; line-height: 1.6;">
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
       </div>
     `;
 
-    const text = `Hi ${body.designerName},
+    const text = `Hi ${body.userName},
 
 I've added ${body.customer} into prospects in Zoho CRM. Please check it out and make sure everything is correct.
 

@@ -268,7 +268,7 @@ export async function createDeal(deal: {
   amount: number;
   stage?: string;
   description?: string;
-  designerName?: string;
+  userName?: string;
   jobType?: "Residential" | "Commercial"; // maps to the Deal's "Type" field
   installationStreet?: string;
   installationCity?: string;
@@ -290,7 +290,7 @@ export async function createDeal(deal: {
   if (deal.installationState) record.Installation_State = deal.installationState;
   if (deal.installationZip) record.Installation_Zip = deal.installationZip;
   // Owner should be a user lookup — skip for now, it needs a user ID not a name
-  // if (deal.designerName) record.Owner = deal.designerName;
+  // if (deal.userName) record.Owner = deal.userName;
 
   const result = await crmApiCall("POST", "/Deals", { data: [record] }) as { data?: { details?: { id?: string } }[] };
   const id = result?.data?.[0]?.details?.id;

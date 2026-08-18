@@ -60,7 +60,7 @@ interface CreateEstimateRequest {
   companyCityStateZip?: string;
   companyPhone?: string;
   companyEmail?: string;
-  designerName?: string;
+  userName?: string;
   feeAmount?: number;
   feePct?: number;
   lines: EstimateLine[];
@@ -207,7 +207,7 @@ export async function POST(request: NextRequest) {
       dealId: body.dealId,
       opportunityNumber: body.opportunityNumber,
       estimateDate: parseDateForBooks(body.date),
-      salespersonName: body.designerName,
+      salespersonName: body.userName,
       lineItems,
     });
 
