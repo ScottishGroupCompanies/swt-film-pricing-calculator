@@ -850,10 +850,13 @@ export async function healthCheck(): Promise<ZohoHealthStatus> {
     const token = await getAccessToken();
     const tokenValid = !!token;
 
-    // Try a simple CRM API call (get current user / org info)
+    // Try a simple CRM API call using a scope this app is actually granted
+    // (ZohoCRM.modules.ALL) — /org requires ZohoCRM.org.READ, which isn't
+    // part of this app's OAuth scopes and would always report a false
+    // "unreachable" even when the real Deals/Contacts/Books calls work fine.
     let crmReachable = false;
     try {
-      await crmApiCall("GET", "/org");
+      await crmApiCall("GET", "/Deals?per_page=1");
       crmReachable = true;
     } catch {
       // CRM might not be set up yet — that's ok for health check
