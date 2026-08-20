@@ -398,12 +398,17 @@ function CurrentUserBadge({ user, onLogout }: { user: User | null; onLogout: () 
 // ─── CONTACT SEARCH PICKER (search previous Zoho contacts, autofill) ─────
 
 export interface ZohoContactResult {
+  type: "contact" | "deal";
   id: string;
+  dealId?: string | null;
+  opportunityNumber?: string | null;
   name: string;
   email: string;
   phone: string;
   address: string;
   cityStateZip: string;
+  installationAddress?: string;
+  installationCityStateZip?: string;
   isCommercial?: boolean;
   accountId?: string | null;
   companyName?: string;
@@ -466,7 +471,7 @@ function ContactSearchPicker({
         .then((r) => r.json())
         .then((data) => {
           if (data.success) {
-            setResults(data.contacts || []);
+            setResults(data.results || []);
           } else {
             setError(data.error || "Search failed");
             setResults([]);
@@ -498,7 +503,7 @@ function ContactSearchPicker({
           <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
         </svg>
         <span style={{ fontSize: 13, color: THEME.greenDark, fontWeight: 500 }}>
-          Search previous contacts in Zoho…
+          Search previous contacts &amp; jobs in Zoho…
         </span>
       </div>
 
@@ -548,7 +553,7 @@ function ContactSearchPicker({
             )}
             {!loading && !error && q.trim().length >= 2 && results.length === 0 && (
               <div style={{ padding: "16px", textAlign: "center", color: THEME.textMuted, fontSize: 12 }}>
-                No contacts found matching &quot;{q}&quot;
+                No contacts or jobs found matching &quot;{q}&quot;
               </div>
             )}
             {!loading && q.trim().length < 2 && (
@@ -556,29 +561,44 @@ function ContactSearchPicker({
                 Type at least 2 characters to search
               </div>
             )}
-            {results.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => { onSelect(c); setOpen(false); setQ(""); setResults([]); }}
-                style={{
-                  padding: "10px 14px", cursor: "pointer",
-                  borderBottom: `1px solid ${THEME.lightGray}`,
-                  transition: "background 0.1s",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = THEME.lightGray)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                <div style={{ fontSize: 13, fontWeight: 600, color: THEME.textDark }}>{c.name}</div>
-                <div style={{ fontSize: 11, color: THEME.textMuted, marginTop: 2 }}>
-                  {[c.address, c.cityStateZip].filter(Boolean).join(", ") || "No address on file"}
-                </div>
-                {(c.email || c.phone) && (
-                  <div style={{ fontSize: 11, color: THEME.textMuted, marginTop: 1 }}>
-                    {[c.phone, c.email].filter(Boolean).join(" · ")}
+            {results.map((c) => {
+              const displayAddress = c.type === "deal"
+                ? [c.installationAddress, c.installationCityStateZip].filter(Boolean).join(", ")
+                : [c.address, c.cityStateZip].filter(Boolean).join(", ");
+              return (
+                <div
+                  key={`${c.type}-${c.id}-${c.dealId || ""}`}
+                  onClick={() => { onSelect(c); setOpen(false); setQ(""); setResults([]); }}
+                  style={{
+                    padding: "10px 14px", cursor: "pointer",
+                    borderBottom: `1px solid ${THEME.lightGray}`,
+                    transition: "background 0.1s",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = THEME.lightGray)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: THEME.textDark }}>{c.name}</div>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em",
+                      padding: "2px 6px", borderRadius: 4,
+                      background: c.type === "deal" ? THEME.greenBg : THEME.lightGray,
+                      color: c.type === "deal" ? THEME.greenDark : THEME.textMuted,
+                    }}>
+                      {c.type === "deal" ? (c.opportunityNumber || "Job") : "Contact"}
+                    </span>
                   </div>
-                )}
-              </div>
-            ))}
+                  <div style={{ fontSize: 11, color: THEME.textMuted, marginTop: 2 }}>
+                    {displayAddress || "No address on file"}
+                  </div>
+                  {(c.email || c.phone) && (
+                    <div style={{ fontSize: 11, color: THEME.textMuted, marginTop: 1 }}>
+                      {[c.phone, c.email].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>,
         document.body
@@ -1162,7 +1182,25 @@ export default function PricingCalculator() {
             <div style={{ marginBottom: 12 }}>
               <ContactSearchPicker
                 onSelect={(c) => {
-                  if (c.isCommercial) {
+                  if (c.type === "deal") {
+                    // Picking an existing JOB (Opportunity) — prefill the
+                    // customer name + real installation address so the rep
+                    // can start a brand-new pricing job for the same
+                    // customer/address, per Jenny's explicit confirmation
+                    // this should NOT reopen/reuse the old Deal record.
+                    setJobType(c.isCommercial ? "Commercial" : "Residential");
+                    setCustomer(c.name);
+                    setAddress(c.installationAddress || "");
+                    setCityStateZip(c.installationCityStateZip || "");
+                    if (c.isCommercial && c.companyName) {
+                      setCompanyName(c.companyName);
+                    }
+                    // Deliberately NOT setting existingContactId here — a
+                    // Deal search result doesn't carry full contact detail
+                    // (phone/email), and reusing the wrong contact record
+                    // would be worse than just creating a fresh one.
+                    setExistingContactId(null);
+                  } else if (c.isCommercial) {
                     // Commercial contact — split Business (Account) fields
                     // from the Contact Person's own fields, and switch the
                     // job type toggle automatically so the right section
@@ -1180,6 +1218,7 @@ export default function PricingCalculator() {
                     setContactBillingCityStateZip(c.cityStateZip);
                     // "customer" still drives the Deal/Contact display name
                     setCustomer(c.name);
+                    setExistingContactId(c.id);
                   } else {
                     setJobType("Residential");
                     setCustomer(c.name);
@@ -1187,8 +1226,8 @@ export default function PricingCalculator() {
                     setCityStateZip(c.cityStateZip);
                     setPhone(c.phone);
                     setEmail(c.email);
+                    setExistingContactId(c.id);
                   }
-                  setExistingContactId(c.id);
                 }}
               />
               {existingContactId && (

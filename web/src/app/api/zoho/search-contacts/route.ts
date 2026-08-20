@@ -1,31 +1,55 @@
 /**
  * GET /api/zoho/search-contacts?q=jenny
  *
- * Searches Zoho CRM Contacts by fuzzy name/email/phone match. Used by the
- * calculator's "search previous contacts" autofill picker so reps can pull
- * in an existing prospect's info instead of re-typing it.
+ * Unified fuzzy search across BOTH Zoho CRM Contacts and Deals
+ * (Opportunities), so the "search previous jobs" picker can pull in either
+ * a person's saved info OR re-open a specific existing job and get its
+ * real installation address back (which lives on the Deal itself —
+ * Installation_Street/City/State/Zip — not on the Contact record).
  *
- * When a matched Contact is linked to a real Zoho Account (i.e. it's a
- * Commercial client), the Account's own business name/address/phone/email
- * are fetched and returned too — so selecting an existing commercial
- * contact fills out the full Business + Contact Person split, not just
- * the person's own fields.
+ * Contacts give: mailing address, and (if linked to a real Commercial
+ * Account) the business's own name/address/phone/email.
+ * Deals give: the job's real installation address, Opportunity Number,
+ * and the linked Contact/Account name for display.
  *
- * Returns: { success, contacts: [{
- *   id, name, email, phone, address, cityStateZip,
+ * Returns: { success, results: [{
+ *   type: "contact" | "deal",
+ *   id, dealId, opportunityNumber, name, email, phone,
+ *   address, cityStateZip, installationAddress, installationCityStateZip,
  *   isCommercial, accountId, companyName, companyAddress,
  *   companyCityStateZip, companyPhone, companyEmail,
  * }] }
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { searchContactsFuzzy, getRecord, type ZohoCRMRecord } from "@/lib/zoho";
+import { searchContactsFuzzy, searchDealsFuzzy, getRecord, type ZohoCRMRecord } from "@/lib/zoho";
 
 function splitCityStateZip(city: string, state: string, zip: string): string {
   return ([city, state].filter(Boolean).join(", ") + (zip ? ` ${zip}` : "")).trim();
 }
 
-async function formatContact(c: ZohoCRMRecord) {
+interface SearchResult {
+  type: "contact" | "deal";
+  id: string;
+  dealId: string | null;
+  opportunityNumber: string | null;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  cityStateZip: string;
+  installationAddress: string;
+  installationCityStateZip: string;
+  isCommercial: boolean;
+  accountId: string | null;
+  companyName: string;
+  companyAddress: string;
+  companyCityStateZip: string;
+  companyPhone: string;
+  companyEmail: string;
+}
+
+async function formatContact(c: ZohoCRMRecord): Promise<SearchResult> {
   const firstName = (c.First_Name as string) || "";
   const lastName = (c.Last_Name as string) || "";
   const name = `${firstName} ${lastName}`.trim() || "—";
@@ -39,13 +63,18 @@ async function formatContact(c: ZohoCRMRecord) {
   const accountLookup = c.Account_Name as { id?: string; name?: string } | null;
   const accountId = accountLookup?.id || null;
 
-  const base = {
+  const base: SearchResult = {
+    type: "contact",
     id: c.id as string,
+    dealId: null,
+    opportunityNumber: null,
     name,
     email: (c.Email as string) || "",
     phone: (c.Phone as string) || (c.Mobile as string) || "",
     address: (c.Mailing_Street as string) || "",
     cityStateZip,
+    installationAddress: "",
+    installationCityStateZip: "",
     isCommercial: false,
     accountId,
     companyName: "",
@@ -87,24 +116,66 @@ async function formatContact(c: ZohoCRMRecord) {
   }
 }
 
+function formatDeal(d: ZohoCRMRecord): SearchResult {
+  const contactLookup = d.Contact_Name as { id?: string; name?: string } | null;
+  const accountLookup = d.Account_Name as { id?: string; name?: string } | null;
+  const displayName = contactLookup?.name || accountLookup?.name || (d.Deal_Name as string) || "—";
+
+  const installationCityStateZip = splitCityStateZip(
+    (d.Installation_City as string) || "",
+    (d.Installation_State as string) || "",
+    (d.Installation_Zip as string) || ""
+  );
+
+  return {
+    type: "deal",
+    id: (contactLookup?.id as string) || (d.id as string),
+    dealId: d.id as string,
+    opportunityNumber: (d.Opportunity_Number as string) || null,
+    name: displayName,
+    email: "",
+    phone: "",
+    address: "",
+    cityStateZip: "",
+    installationAddress: (d.Installation_Street as string) || "",
+    installationCityStateZip,
+    isCommercial: d.Type === "Commercial" || !!accountLookup,
+    accountId: accountLookup?.id || null,
+    companyName: accountLookup?.name || "",
+    companyAddress: "",
+    companyCityStateZip: "",
+    companyPhone: "",
+    companyEmail: "",
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const q = request.nextUrl.searchParams.get("q") || "";
 
     if (q.trim().length < 2) {
-      return NextResponse.json({ success: true, contacts: [] });
+      return NextResponse.json({ success: true, results: [] });
     }
 
-    const contacts = await searchContactsFuzzy(q, 10);
-    const formatted = await Promise.all(contacts.map(formatContact));
+    const [contacts, deals] = await Promise.all([
+      searchContactsFuzzy(q, 8),
+      searchDealsFuzzy(q, 8),
+    ]);
 
-    return NextResponse.json({
-      success: true,
-      contacts: formatted,
-    });
+    const [formattedContacts, formattedDeals] = await Promise.all([
+      Promise.all(contacts.map(formatContact)),
+      Promise.resolve(deals.map(formatDeal)),
+    ]);
+
+    // Deals first — reopening a specific existing job (with its real
+    // installation address) is usually what a rep searching by customer
+    // name is trying to do, ahead of a bare contact-only match.
+    const results = [...formattedDeals, ...formattedContacts];
+
+    return NextResponse.json({ success: true, results });
   } catch (e) {
     return NextResponse.json(
-      { success: false, error: e instanceof Error ? e.message : "Internal server error", contacts: [] },
+      { success: false, error: e instanceof Error ? e.message : "Internal server error", results: [] },
       { status: 500 }
     );
   }

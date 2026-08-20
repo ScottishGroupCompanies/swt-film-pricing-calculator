@@ -253,6 +253,23 @@ export async function searchContactsFuzzy(query: string, limit = 10): Promise<Zo
 }
 
 /**
+ * Fuzzy-search existing Deals (Opportunities) by name/customer — used
+ * alongside searchContactsFuzzy so reps can pull an EXISTING job back up
+ * (not just a contact) and get its real installation address, which lives
+ * on the Deal itself (Installation_Street/City/State/Zip), not on the
+ * Contact record.
+ */
+export async function searchDealsFuzzy(query: string, limit = 10): Promise<ZohoCRMRecord[]> {
+  if (!query || query.trim().length < 2) return [];
+  const fields = "Deal_Name,Opportunity_Number,Installation_Street,Installation_City,Installation_State,Installation_Zip,Contact_Name,Account_Name,Type,Stage,Modified_Time";
+  const result = await crmApiCall(
+    "GET",
+    `/Deals/search?word=${encodeURIComponent(query.trim())}&fields=${fields}&per_page=${limit}`
+  ) as { data?: ZohoCRMRecord[] };
+  return result?.data ?? [];
+}
+
+/**
  * Create a new contact in Zoho CRM
  */
 export async function createContact(contact: {
