@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef, useEffect, useSyncExternalStore } from "react";
+import { useRouter } from "next/navigation";
 import {
   PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT,
-  USERS, FILMS, BRANDS, BRAND_COLORS,
+  FILMS, BRANDS, BRAND_COLORS,
   fmt$, fmtSF, getCommRate, getOverUnderComm, calcRowGeometry, newRow, initials,
   type User, type Film, type RowData, type RowCalc,
 } from "@/lib/pricingData";
@@ -350,138 +351,47 @@ function FilmPicker({
 
 // ─── DESIGNER PICKER (portal dropdown) ────────────────────────────────────
 
-function UserPicker({
-  user, onSelect,
-}: {
-  user: User | null;
-  onSelect: (d: User) => void;
-}) {
+// Read-only badge showing the signed-in user — no dropdown, no way to
+// switch to another rep. The user's identity comes entirely from their
+// login session (see /api/auth/me), never from client-side selection, so
+// nobody can view another rep's commission data by picking their name.
+function CurrentUserBadge({ user, onLogout }: { user: User | null; onLogout: () => void }) {
   const { isMobile } = useBreakpoint();
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; right: number; width: number }>({ top: 0, right: 0, width: 320 });
-
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (triggerRef.current?.contains(target) || dropdownRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [open]);
-
-  useEffect(() => {
-    if (open && triggerRef.current) {
-      const compute = () => {
-        const r = triggerRef.current?.getBoundingClientRect();
-        if (!r) return;
-        // Clamp to the viewport so the dropdown never overflows on phones —
-        // a fixed 320px width can push past the right edge when the trigger
-        // button sits close to it on a narrow screen.
-        const width = Math.min(320, window.innerWidth - 24);
-        let right = window.innerWidth - r.right;
-        if (right + width > window.innerWidth - 12) right = window.innerWidth - width - 12;
-        if (right < 12) right = 12;
-        setPos({ top: r.bottom + 4, right, width });
-      };
-      compute();
-      window.addEventListener("scroll", compute, true);
-      window.addEventListener("resize", compute);
-      return () => {
-        window.removeEventListener("scroll", compute, true);
-        window.removeEventListener("resize", compute);
-      };
-    }
-  }, [open]);
-
   return (
-    <>
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      background: THEME.white, border: `1px solid ${THEME.border}`,
+      borderRadius: 8, padding: "5px 10px 5px 5px",
+      maxWidth: isMobile ? 170 : undefined,
+    }}>
+      <div style={{
+        width: 28, height: 28, borderRadius: "50%",
+        background: THEME.green,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 10, fontWeight: 700, color: "#fff", flexShrink: 0,
+      }}>
+        {user ? initials(user.name) : "?"}
+      </div>
+      <div style={{ overflow: "hidden", minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: THEME.textDark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {user ? user.name : "…"}
+        </div>
+        {user && !isMobile && (
+          <div style={{ fontSize: 10, color: THEME.textMuted }}>{user.loc}</div>
+        )}
+      </div>
       <button
-        ref={triggerRef}
-        onClick={() => setOpen((o) => !o)}
+        onClick={onLogout}
+        title="Log out"
         style={{
-          display: "flex", alignItems: "center", gap: 8,
-          background: user ? THEME.white : THEME.green,
-          border: `1px solid ${user ? THEME.border : THEME.greenDark}`,
-          borderRadius: 8, padding: "5px 12px 5px 5px", cursor: "pointer",
-          color: user ? THEME.textDark : "#fff",
-          fontFamily: "inherit", fontSize: 13, fontWeight: 500,
-          transition: "all 0.15s", maxWidth: isMobile ? 150 : undefined,
+          background: "none", border: "none", cursor: "pointer",
+          color: THEME.textMuted, fontSize: 11, fontFamily: "inherit",
+          padding: "4px 6px", flexShrink: 0,
         }}
       >
-        <div style={{
-          width: 28, height: 28, borderRadius: "50%",
-          background: user ? THEME.green : "rgba(255,255,255,0.25)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 10, fontWeight: 700,
-          color: "#fff", flexShrink: 0,
-        }}>
-          {user ? initials(user.name) : "?"}
-        </div>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {user ? user.name : "Select user"}
-        </span>
-        {user && !isMobile && (
-          <span style={{ fontSize: 11, color: THEME.textMuted, fontWeight: 400 }}>
-            · {user.loc}
-          </span>
-        )}
-        <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-          <path d="M6 9l6 6 6-6" />
-        </svg>
+        Log out
       </button>
-
-      {open && typeof document !== "undefined" && createPortal(
-        <div
-          ref={dropdownRef}
-          style={{
-            position: "fixed", top: pos.top, right: pos.right, width: pos.width,
-            background: THEME.white, border: `1px solid ${THEME.border}`, borderRadius: 12,
-            zIndex: 9999, boxShadow: "0 16px 48px rgba(0,0,0,.18)",
-            maxHeight: 400, overflowY: "auto", padding: 6,
-          }}
-        >
-          {USERS.map((d) => (
-            <div
-              key={d.id}
-              onClick={() => { onSelect(d); setOpen(false); }}
-              style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
-                borderRadius: 8, cursor: "pointer",
-                background: user?.id === d.id ? THEME.greenBg : "transparent",
-                transition: "background 0.1s",
-              }}
-              onMouseEnter={(e) => { if (user?.id !== d.id) e.currentTarget.style.background = THEME.lightGray; }}
-              onMouseLeave={(e) => { if (user?.id !== d.id) e.currentTarget.style.background = "transparent"; }}
-            >
-              <div style={{
-                width: 34, height: 34, borderRadius: "50%", background: THEME.green,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0,
-              }}>
-                {initials(d.name)}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: THEME.textDark }}>{d.name}</div>
-                <div style={{ fontSize: 11, color: THEME.textMuted }}>
-                  {d.loc}
-                  {d.glassRate ? ` · ${Math.round(d.glassRate * 100)}% glass commission` : ""}
-                </div>
-              </div>
-              {user?.id === d.id && (
-                <svg width="16" height="16" fill="none" stroke={THEME.green} strokeWidth="2.5" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-                  <path d="M5 13l4 4L19 7" />
-                </svg>
-              )}
-            </div>
-          ))}
-        </div>,
-        document.body
-      )}
-    </>
+    </div>
   );
 }
 
@@ -719,6 +629,30 @@ export default function PricingCalculator() {
     return n === 3 ? "1fr 1fr 1fr" : "1fr 1fr";
   };
   const [user, setUser] = useState<User | null>(null);
+  const router = useRouter();
+
+  // Fetch the logged-in user's own data on mount. Never fetches or shows
+  // any other user's info — the server only ever returns the caller's own
+  // record based on their signed session cookie (see /api/auth/me).
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => {
+        if (!res.ok) throw new Error("not authenticated");
+        return res.json();
+      })
+      .then((data) => setUser(data.user))
+      .catch(() => {
+        // Session invalid/expired — middleware would normally redirect
+        // before this ever renders, but bounce to /login as a fallback.
+        router.push("/login");
+      });
+  }, [router]);
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+  }
+
   const [customer, setCustomer] = useState("");
   const [address, setAddress] = useState("");
   const [cityStateZip, setCityStateZip] = useState("");
@@ -1178,8 +1112,8 @@ export default function PricingCalculator() {
             </div>
           )}
 
-          {/* User picker */}
-          <UserPicker user={user} onSelect={setUser} />
+          {/* Signed-in user (read-only — no switching) */}
+          <CurrentUserBadge user={user} onLogout={handleLogout} />
         </div>
       </header>
 

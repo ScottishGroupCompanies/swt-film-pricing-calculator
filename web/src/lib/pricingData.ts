@@ -17,6 +17,12 @@ export const DEFAULT_FEE_PCT = 4; // 4% fee (editable per job)
 // client MORE than Total Cost, they earn their own rate on the overage; if
 // they charged LESS (a loss), the loss is split 50/50 with the company —
 // see getOverUnderComm() below. Matches the "Film Commission" sheet exactly.
+//
+// SECURITY: the actual roster + commission rates now live SERVER-SIDE ONLY
+// in src/lib/auth.ts (never imported by client components). The logged-in
+// user's own data is fetched at runtime from /api/auth/me — see
+// PricingCalculator.tsx's useEffect. This file only keeps the shared
+// `User` type so client code can still type the object it receives back.
 
 export interface User {
   id: string;
@@ -25,14 +31,6 @@ export interface User {
   glassRate: number | null;
   filmRate: number | null; // flat commission rate on film sale total
 }
-
-export const USERS: User[] = [
-  { id: "dana",  name: "Dana",  loc: "Colorado",  glassRate: 0,    filmRate: 0.07 },
-  { id: "amy",   name: "Amy",   loc: "Texas",     glassRate: 0,    filmRate: 0.05 },
-  { id: "blake", name: "Blake", loc: "KS/MO",     glassRate: null, filmRate: 0.15 },
-  { id: "katie", name: "Katie", loc: "Arizona",   glassRate: null, filmRate: 0 },
-  { id: "mike",  name: "Mike",  loc: "Tennessee", glassRate: null, filmRate: 0 },
-];
 
 export interface Film {
   name: string;
