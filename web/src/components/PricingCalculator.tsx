@@ -10,7 +10,8 @@ import {
 } from "@/lib/pricingData";
 import {
   buildCustomerProposal, buildInternalRecord, buildCommissionSheet, buildPrintableHTML,
-  downloadFile, printHTML, type ProposalData, type ProposalLine,
+  defaultCommissionSheetExtras,
+  downloadFile, printHTML, type ProposalData, type ProposalLine, type CommissionSheetExtras,
 } from "@/lib/proposal";
 
 // ─── BRAND THEME ──────────────────────────────────────────────────────────
@@ -636,6 +637,151 @@ const smallBtnSt: React.CSSProperties = {
   transition: "all 0.15s",
 };
 
+// ─── COMMISSION SHEET PDF EDITOR (V-10.9 template, editable before download) ─
+// Mirrors the exact grid layout from lib/proposal.ts's buildCommissionSheetHTML
+// so what the rep edits here is what ends up in the downloaded PDF. Editing
+// only touches local component state (CommissionSheetExtras) — nothing here
+// is saved to Zoho or the main calculator's own state.
+
+const csInputSt: React.CSSProperties = {
+  width: "100%", padding: "4px 6px", border: "1px solid #ccc", borderRadius: 3,
+  fontSize: 11, fontFamily: "inherit", outline: "none", background: THEME.white,
+};
+
+const csCellTdSt: React.CSSProperties = {
+  border: "1px solid #000", padding: 2, fontSize: 10,
+};
+
+function CommissionSheetPdfEditor({
+  proposalData, extras, onChange,
+}: {
+  proposalData: ProposalData;
+  extras: CommissionSheetExtras;
+  onChange: (e: CommissionSheetExtras) => void;
+}) {
+  const update = (patch: Partial<CommissionSheetExtras>) => onChange({ ...extras, ...patch });
+  const updateLine = (i: number, patch: Partial<CommissionSheetExtras["lineExtras"][number]>) => {
+    const next = extras.lineExtras.slice();
+    next[i] = { ...next[i], ...patch };
+    onChange({ ...extras, lineExtras: next });
+  };
+
+  const subtotal = proposalData.subtotalAfterDiscount ?? proposalData.total;
+  const totalCost = proposalData.totalCost ?? proposalData.total;
+  const balanceDue = proposalData.balanceDue ?? totalCost;
+
+  return (
+    <div style={{ padding: "16px 24px", overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+      <p style={{ fontSize: 11, color: THEME.textMuted, marginBottom: 12 }}>
+        Edit any field below — Room, Exposure, Frame/Glass, Pane Type, Manufacturer, Warranty, dates, and Notes
+        aren&apos;t captured elsewhere in the calculator, so fill them in here before downloading. Pricing/commission
+        figures come from the job above and update automatically.
+      </p>
+
+      {/* Header info grid */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap" }}>
+        <table style={{ borderCollapse: "collapse", flex: "1 1 320px" }}>
+          <tbody>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", width: 120 }}>Customer Name</td><td style={csCellTdSt}>{proposalData.customer || "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Address</td><td style={csCellTdSt}>{proposalData.address || "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>City, State, Zip</td><td style={csCellTdSt}>{proposalData.cityStateZip || "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Phone</td><td style={csCellTdSt}>{proposalData.phone || "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Email</td><td style={csCellTdSt}>{proposalData.email || "—"}</td></tr>
+          </tbody>
+        </table>
+        <table style={{ borderCollapse: "collapse", flex: "1 1 260px" }}>
+          <tbody>
+            <tr>
+              <td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", width: 120 }}>Estimate Date</td>
+              <td style={csCellTdSt}><input style={csInputSt} value={extras.estimateDate} onChange={(e) => update({ estimateDate: e.target.value })} /></td>
+            </tr>
+            <tr>
+              <td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Installation Date</td>
+              <td style={csCellTdSt}><input style={csInputSt} value={extras.installationDate} onChange={(e) => update({ installationDate: e.target.value })} /></td>
+            </tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Designer</td><td style={csCellTdSt}>{proposalData.userName || "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Location</td><td style={csCellTdSt}>{proposalData.userLoc || "—"}</td></tr>
+            <tr>
+              <td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Manufacturer</td>
+              <td style={csCellTdSt}><input style={csInputSt} value={extras.manufacturer} onChange={(e) => update({ manufacturer: e.target.value })} placeholder="e.g. 3M" /></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginBottom: 10, fontSize: 12 }}>
+        <strong style={{ textDecoration: "underline" }}>Warranty:</strong>{" "}
+        <input
+          style={{ ...csInputSt, width: 300, display: "inline-block" }}
+          value={extras.warranty}
+          onChange={(e) => update({ warranty: e.target.value })}
+          placeholder="e.g. 10 Year Commercial"
+        />
+      </div>
+
+      {/* Line items */}
+      <table style={{ borderCollapse: "collapse", width: "100%", marginBottom: 12 }}>
+        <thead>
+          <tr>
+            {["Room", "Exp.", "Frame/Glass", "Pane Type", "Film", "Dims", "Qty", "Sq. Ft.", "Price"].map((h) => (
+              <th key={h} style={{ border: "1px solid #000", padding: "4px 6px", fontSize: 10, background: "#dce6f1", fontWeight: 700 }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {proposalData.lines.map((l, i) => {
+            const ex = extras.lineExtras[i] || { room: "", exposure: "", frameGlass: "", paneType: "" };
+            return (
+              <tr key={i}>
+                <td style={csCellTdSt}><input style={csInputSt} value={ex.room} onChange={(e) => updateLine(i, { room: e.target.value })} /></td>
+                <td style={csCellTdSt}><input style={csInputSt} value={ex.exposure} onChange={(e) => updateLine(i, { exposure: e.target.value })} /></td>
+                <td style={csCellTdSt}><input style={csInputSt} value={ex.frameGlass} onChange={(e) => updateLine(i, { frameGlass: e.target.value })} /></td>
+                <td style={csCellTdSt}><input style={csInputSt} value={ex.paneType} onChange={(e) => updateLine(i, { paneType: e.target.value })} /></td>
+                <td style={{ ...csCellTdSt, whiteSpace: "nowrap" }}>{l.film || "—"}{l.brand ? ` (${l.brand})` : ""}</td>
+                <td style={csCellTdSt}>{l.dims}</td>
+                <td style={{ ...csCellTdSt, textAlign: "center" }}>{l.qty}</td>
+                <td style={{ ...csCellTdSt, textAlign: "right" }}>{l.chargedSF != null ? l.chargedSF.toFixed(2) : "—"}</td>
+                <td style={{ ...csCellTdSt, textAlign: "right" }}>{l.lineTotal.toFixed(2)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        {/* Notes */}
+        <div style={{ flex: "2 1 320px" }}>
+          <label style={{ fontSize: 11, fontWeight: 700, display: "block", marginBottom: 4 }}>Notes</label>
+          <textarea
+            style={{ ...csInputSt, minHeight: 100, resize: "vertical" }}
+            value={extras.notes}
+            onChange={(e) => update({ notes: e.target.value })}
+            placeholder="Sq. Ft. Film Removal, French Panes, or any other job notes…"
+          />
+        </div>
+
+        {/* Financials (read-only, mirrors the job's numbers) */}
+        <table style={{ borderCollapse: "collapse", flex: "1 1 240px", height: "fit-content" }}>
+          <tbody>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Film Total</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(proposalData.total)}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Attachment/Other</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.attachmentOther ? fmt$(proposalData.attachmentOther) : "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Subtotal</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(subtotal)}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>{proposalData.feePct ?? 4}% Fees*</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(proposalData.feeAmount ?? 0)}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Total Cost</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(totalCost)}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Deposit</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.deposit ? fmt$(proposalData.deposit) : "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Balance Due</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(balanceDue)}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Charged to Client</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.chargedToClient != null ? fmt$(proposalData.chargedToClient) : "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Difference</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.difference >= 0 ? "+" : "−"}{fmt$(Math.abs(proposalData.difference))}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>{proposalData.commRate != null ? (proposalData.commRate * 100).toFixed(0) : "—"}% Commission on Sale</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.baseCommission != null ? fmt$(proposalData.baseCommission) : "—"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Commission Over/Under</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.overUnderComm ? `${proposalData.overUnderComm >= 0 ? "+" : "−"}${fmt$(Math.abs(proposalData.overUnderComm))}` : "$0.00"}</td></tr>
+            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Total Commission</td><td style={{ ...csCellTdSt, textAlign: "right", fontWeight: 700 }}>{proposalData.commission != null ? fmt$(proposalData.commission) : "—"}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────
 
 export default function PricingCalculator() {
@@ -694,7 +840,10 @@ export default function PricingCalculator() {
   const [opportunityNameTouched, setOpportunityNameTouched] = useState(false);
   const [minDim, setMinDim] = useState(MIN_DIM_DEFAULT);
   const [rows, setRows] = useState<RowData[]>([newRow(), newRow(), newRow()]);
-  const [activeTab, setActiveTab] = useState<"customer" | "internal" | "commission">("customer");
+  const [activeTab, setActiveTab] = useState<"customer" | "internal" | "commission" | "commissionPdf">("customer");
+  const [commissionSheetExtras, setCommissionSheetExtras] = useState<CommissionSheetExtras | null>(null);
+  const [commissionPdfStatus, setCommissionPdfStatus] = useState<"idle" | "generating" | "error">("idle");
+  const [commissionPdfError, setCommissionPdfError] = useState<string | null>(null);
   const [showProposals, setShowProposals] = useState(false);
   const [chargedToClient, setChargedToClient] = useState<string>("");
   const [zohoStatus, setZohoStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
@@ -919,6 +1068,40 @@ export default function PricingCalculator() {
     const html = buildPrintableHTML(proposalData);
     const filename = `SWT-${(customer || "proposal").replace(/\s+/g, "-")}.html`;
     downloadFile(filename, html, "text/html");
+  }
+
+  // Renders the current edited Commission Sheet (V-10.9 template) to a PDF
+  // server-side (same htmlToPdf pipeline as the Zoho estimate PDF) and
+  // triggers a direct browser download — no Zoho involvement, this is a
+  // standalone document the rep can edit freely before downloading.
+  async function handleDownloadCommissionPdf() {
+    if (!proposalData || !commissionSheetExtras) return;
+    setCommissionPdfStatus("generating");
+    setCommissionPdfError(null);
+    try {
+      const res = await fetch("/api/commission-sheet-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposalData, extras: commissionSheetExtras }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `PDF generation failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `SWT-${(customer || "commission-sheet").replace(/\s+/g, "-")}-commission-sheet.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setCommissionPdfStatus("idle");
+    } catch (e) {
+      setCommissionPdfStatus("error");
+      setCommissionPdfError(e instanceof Error ? e.message : "PDF generation failed");
+    }
   }
 
   function resetJob() {
@@ -1698,21 +1881,34 @@ export default function PricingCalculator() {
                     Proposal
                   </span>
                 </p>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={handlePrint} style={smallBtnSt}>🖨 Print</button>
-                  <button onClick={handleDownloadHTML} style={smallBtnSt}>📄 HTML</button>
-                  <button onClick={handleDownloadText} style={smallBtnSt}>
-                    📝 {activeTab === "customer" ? "Customer" : activeTab === "internal" ? "Internal" : "Commission"} .txt
-                  </button>
-                </div>
+                {activeTab === "commissionPdf" ? (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={handleDownloadCommissionPdf} disabled={commissionPdfStatus === "generating"} style={smallBtnSt}>
+                      {commissionPdfStatus === "generating" ? "Generating…" : "⬇ Download PDF"}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={handlePrint} style={smallBtnSt}>🖨 Print</button>
+                    <button onClick={handleDownloadHTML} style={smallBtnSt}>📄 HTML</button>
+                    <button onClick={handleDownloadText} style={smallBtnSt}>
+                      📝 {activeTab === "customer" ? "Customer" : activeTab === "internal" ? "Internal" : "Commission"} .txt
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Tabs */}
-              <div style={{ display: "flex", padding: "0 24px", borderBottom: `1px solid ${THEME.border}` }}>
-                {(["customer", "internal", "commission"] as const).map((t) => (
+              <div style={{ display: "flex", padding: "0 24px", borderBottom: `1px solid ${THEME.border}`, flexWrap: "wrap" }}>
+                {(["customer", "internal", "commission", "commissionPdf"] as const).map((t) => (
                   <button
                     key={t}
-                    onClick={() => setActiveTab(t)}
+                    onClick={() => {
+                      setActiveTab(t);
+                      if (t === "commissionPdf" && !commissionSheetExtras) {
+                        setCommissionSheetExtras(defaultCommissionSheetExtras(proposalData));
+                      }
+                    }}
                     style={{
                       padding: "10px 16px", fontSize: 12,
                       fontWeight: activeTab === t ? 600 : 500,
@@ -1720,30 +1916,46 @@ export default function PricingCalculator() {
                       background: "none", border: "none",
                       borderBottom: `2px solid ${activeTab === t ? THEME.green : "transparent"}`,
                       cursor: "pointer", fontFamily: "inherit",
-                      textTransform: "capitalize",
+                      textTransform: "capitalize", whiteSpace: "nowrap",
                     }}
                   >
-                    {t === "customer" ? "Customer Proposal" : t === "internal" ? "Internal Record" : "Commission Sheet"}
+                    {t === "customer" ? "Customer Proposal" : t === "internal" ? "Internal Record" : t === "commission" ? "Commission Sheet" : "Commission Sheet PDF"}
                   </button>
                 ))}
               </div>
 
               {/* Proposal content */}
-              <div style={{
-                padding: "16px 24px",
-                fontSize: 12, lineHeight: 1.8, color: THEME.darkGray,
-                whiteSpace: "pre-wrap", fontFamily: "ui-monospace, 'SF Mono', monospace",
-                maxHeight: 500, overflowY: "auto",
-              }}>
-                {activeTab === "customer"
-                  ? buildCustomerProposal(proposalData)
-                  : activeTab === "internal"
-                    ? buildInternalRecord(proposalData)
-                    : buildCommissionSheet(proposalData)}
-              </div>
+              {activeTab === "commissionPdf" ? (
+                commissionSheetExtras && (
+                  <CommissionSheetPdfEditor
+                    proposalData={proposalData}
+                    extras={commissionSheetExtras}
+                    onChange={setCommissionSheetExtras}
+                  />
+                )
+              ) : (
+                <div style={{
+                  padding: "16px 24px",
+                  fontSize: 12, lineHeight: 1.8, color: THEME.darkGray,
+                  whiteSpace: "pre-wrap", fontFamily: "ui-monospace, 'SF Mono', monospace",
+                  maxHeight: 500, overflowY: "auto",
+                }}>
+                  {activeTab === "customer"
+                    ? buildCustomerProposal(proposalData)
+                    : activeTab === "internal"
+                      ? buildInternalRecord(proposalData)
+                      : buildCommissionSheet(proposalData)}
+                </div>
+              )}
+              {commissionPdfStatus === "error" && commissionPdfError && (
+                <div style={{ padding: "0 24px 16px", color: "#c0392b", fontSize: 12 }}>
+                  {commissionPdfError}
+                </div>
+              )}
             </section>
           )}
         </div>
+
 
         {/* ── RIGHT SIDEBAR (summary + actions) — beside the form on desktop,
               stacked below it as a full-width panel on mobile/tablet ── */}

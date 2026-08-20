@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
   // calls htmlToPdf() (src/lib/pdf.ts) fixes that.
   outputFileTracingIncludes: {
     "/api/zoho/generate-estimate": ["./node_modules/@sparticuz/chromium/bin/**"],
+    "/api/commission-sheet-pdf": ["./node_modules/@sparticuz/chromium/bin/**"],
   },
 };
 

@@ -377,6 +377,226 @@ COMMISSION:
 ${commBreakdown}`;
 }
 
+// ─── COMMISSION SHEET PDF (V-10.9 template) ───────────────────────────────
+// Fields the calculator doesn't collect today (Room/Exposure/Frame-Glass/
+// Pane Type per line, Manufacturer, Warranty, Estimate/Install dates) are
+// captured here as a separate editable layer over the same line items —
+// per Jenny's explicit choice, these live ONLY on this sheet, not in the
+// main calculator's data model.
+export interface CommissionSheetLineExtra {
+  room: string;
+  exposure: string;
+  frameGlass: string;
+  paneType: string;
+}
+
+export interface CommissionSheetExtras {
+  estimateDate: string;
+  installationDate: string;
+  manufacturer: string;
+  warranty: string;
+  notes: string;
+  lineExtras: CommissionSheetLineExtra[]; // one per d.lines[i], same index
+}
+
+export function defaultCommissionSheetExtras(d: ProposalData): CommissionSheetExtras {
+  return {
+    estimateDate: d.date || "",
+    installationDate: "",
+    manufacturer: "",
+    warranty: "",
+    notes: "",
+    lineExtras: d.lines.map(() => ({ room: "", exposure: "", frameGlass: "", paneType: "" })),
+  };
+}
+
+/**
+ * Renders the exact "Commission Sheet" grid template (3M-style estimate
+ * form used internally — Customer info + Estimate/Designer info header,
+ * a Room/Exp/Frame-Glass/Pane Type/Film/Width/Height/Qty/Sq.Ft./Price
+ * table, Notes box, and a Film Total -> Attachment/Other -> Subtotal ->
+ * 4% Fees -> Total Cost -> Deposit -> Balance Due -> Charged to Client ->
+ * Difference -> Commission on Sale -> Commission Over/Under -> Total
+ * Commission financial column) as static HTML for the PDF export. The
+ * live in-app editable version renders the same visual grid with real
+ * <input> elements — see the CommissionSheetPdfEditor component in
+ * PricingCalculator.tsx — this function is the "frozen" HTML used once
+ * the rep is done editing and clicks Download PDF.
+ */
+export function buildCommissionSheetHTML(d: ProposalData, extras: CommissionSheetExtras): string {
+  const subtotal = d.subtotalAfterDiscount ?? d.total;
+  const totalCost = d.totalCost ?? d.total;
+  const balanceDue = d.balanceDue ?? totalCost;
+
+  const rows = d.lines.map((l, i) => {
+    const ex = extras.lineExtras[i] || { room: "", exposure: "", frameGlass: "", paneType: "" };
+    const dims = l.dims || "";
+    const [width, height] = dims.split(/[x×]/i).map((s) => s?.trim() || "");
+    return `
+    <tr>
+      <td>${esc(ex.room)}</td>
+      <td>${esc(ex.exposure)}</td>
+      <td>${esc(ex.frameGlass)}</td>
+      <td>${esc(ex.paneType)}</td>
+      <td style="text-align:left;">${esc(l.film || "")}${l.brand ? ` <span style="color:#888;">(${esc(l.brand)})</span>` : ""}</td>
+      <td>${esc(width)}</td>
+      <td>${esc(height)}</td>
+      <td>${l.qty}</td>
+      <td>${l.chargedSF != null ? l.chargedSF.toFixed(2) : ""}</td>
+      <td style="text-align:right;">${l.lineTotal.toFixed(2)}</td>
+    </tr>`;
+  }).join("");
+
+  // Pad with a handful of blank rows so the grid still looks like the
+  // spreadsheet template even on a small job (matches the screenshot,
+  // which shows ~24 blank rows regardless of how many lines are filled).
+  const blankRowsNeeded = Math.max(0, 22 - d.lines.length);
+  const blankRows = Array.from({ length: blankRowsNeeded }, () =>
+    `<tr>${"<td>&nbsp;</td>".repeat(10)}</tr>`
+  ).join("");
+
+  const totalSF = d.lines.reduce((sum, l) => sum + (l.chargedSF || 0), 0);
+
+  const attachmentOtherAmt = d.attachmentOther ?? 0;
+  const attachmentIsOther = attachmentOtherAmt !== 0; // matches the sheet's checkbox convention (Other vs C-Bond)
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commission Sheet — ${esc(d.customer || "Customer")}</title>
+<style>
+  @page { margin: 0.35in; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #000; margin: 0; padding: 0; font-size: 11px; }
+  .header-contact { text-align: center; font-size: 11px; line-height: 1.5; margin-bottom: 8px; }
+  .top-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 6px; }
+  table.info { border-collapse: collapse; width: 100%; }
+  table.info td { border: 1px solid #000; padding: 3px 6px; font-size: 11px; }
+  table.info td.label { font-weight: 700; background: #dce6f1; width: 130px; }
+  .logo-box { width: 220px; text-align: right; padding-top: 4px; }
+  .logo-box img { max-width: 200px; }
+  .warranty { font-size: 11px; margin: 6px 0; }
+  .warranty strong { text-decoration: underline; }
+  table.items { border-collapse: collapse; width: 100%; margin-top: 4px; }
+  table.items th, table.items td { border: 1px solid #000; padding: 3px 4px; font-size: 10px; text-align: center; }
+  table.items th { background: #dce6f1; font-weight: 700; }
+  table.items col.film { width: 26%; }
+  .bottom-row { display: flex; margin-top: 0; }
+  .notes-box { flex: 1; border: 1px solid #000; border-top: none; padding: 4px 6px; font-size: 10px; min-height: 140px; }
+  .notes-box .notes-label { font-weight: 700; }
+  .fin-table { border-collapse: collapse; width: 260px; flex-shrink: 0; }
+  .fin-table td { border: 1px solid #000; padding: 3px 6px; font-size: 10px; }
+  .fin-table td.label { background: #dce6f1; text-align: right; font-weight: 600; }
+  .fin-table td.value { text-align: right; width: 90px; }
+  .fin-table td.check { text-align: center; width: 20px; background: #dce6f1; }
+  .comm-table { border-collapse: collapse; width: 100%; margin-top: 0; }
+  .comm-table td { border: 1px solid #000; padding: 3px 6px; font-size: 10px; }
+  .comm-table td.label { background: #dce6f1; text-align: right; font-weight: 600; }
+  .comm-table td.spacer { border: none; }
+  .comm-table td.value { text-align: right; width: 90px; }
+  .version-tag { font-size: 10px; margin-top: 10px; }
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+  <div class="top-row">
+    <div style="flex:1;">
+      <div class="header-contact">
+        7075 S. Alton Way, Centennial, CO 80112<br>
+        Colorado (303) 662-8214,&nbsp;&nbsp;Kansas/Missouri (816) 256-3864<br>
+        Texas (214) 329-9603, Utah (801) 895-4681, National (866) 846-5758<br>
+        www.scottishwindowtinting.com
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:12px; align-items:flex-start;">
+    <table class="info" style="width:60%;">
+      <tr><td class="label">Customer Name</td><td>${esc(d.customer || "")}</td></tr>
+      <tr><td class="label">Address</td><td>${esc(d.address || "")}</td></tr>
+      <tr><td class="label">City, State, Zip</td><td>${esc(d.cityStateZip || "")}</td></tr>
+      <tr><td class="label">Phone</td><td>${esc(d.phone || "")}</td></tr>
+      <tr><td class="label">Email</td><td>${esc(d.email || "")}</td></tr>
+    </table>
+    <div style="width:38%;">
+      <table class="info" style="margin-bottom:6px;">
+        <tr><td class="label">Estimate Date</td><td>${esc(extras.estimateDate)}</td></tr>
+        <tr><td class="label">Installation Date</td><td>${esc(extras.installationDate)}</td></tr>
+      </table>
+      <table class="info">
+        <tr><td class="label">Designer</td><td>${esc(d.userName || "")}</td></tr>
+        <tr><td class="label">Location</td><td>${esc(d.userLoc || "")}</td></tr>
+        <tr><td class="label">Manufacturer</td><td>${esc(extras.manufacturer)}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="warranty"><strong>Warranty:</strong> ${esc(extras.warranty)}</div>
+
+  <table class="items">
+    <colgroup>
+      <col style="width:9%;"><col style="width:6%;"><col style="width:9%;"><col style="width:9%;">
+      <col class="film"><col style="width:6%;"><col style="width:6%;"><col style="width:5%;">
+      <col style="width:7%;"><col style="width:10%;">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Room</th><th>Exp.</th><th>Frame/Glass</th><th>Pane Type</th><th>Film</th>
+        <th>Width</th><th>Height</th><th>Qty</th><th>Sq. Ft.</th><th>Price</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      ${blankRows}
+    </tbody>
+  </table>
+
+  <div class="bottom-row">
+    <div class="notes-box">
+      <div class="notes-label">Notes:</div>
+      <div style="white-space:pre-wrap; margin-top:2px;">${esc(extras.notes)}</div>
+      <div style="margin-top:10px;">Sq. Ft. Film Removal</div>
+      <div>French Panes</div>
+      <div style="margin-top:6px; font-size:9px; color:#333;">
+        *4% fee includes taxes on materials, shipping, handling, delivery and energy surcharge.<br>
+        Balance due at installation is understood and accepted as the payment term unless otherwise noted.<br><br>
+        This estimate shall constitute a contract upon the client's signature. If not accepted, this estimate
+        expires 90 days from the date of issuance. Only fully paid contracts will activate warranty coverage.
+      </div>
+    </div>
+    <table class="fin-table">
+      <tr><td class="label" colspan="2">Total</td><td class="value">${totalSF > 0 ? totalSF.toFixed(2) : "-"}</td></tr>
+      <tr><td class="label" colspan="2">Film Total</td><td class="value">${fmt$(d.total)}</td></tr>
+      <tr><td class="check">${attachmentIsOther ? "" : "✓"}</td><td class="label">C-Bond</td><td class="value"></td></tr>
+      <tr><td class="check">${attachmentIsOther ? "✓" : ""}</td><td class="label">Other</td><td class="value">${attachmentOtherAmt ? fmt$(attachmentOtherAmt) : ""}</td></tr>
+      <tr><td class="label" colspan="2">Subtotal</td><td class="value">${fmt$(subtotal)}</td></tr>
+      <tr><td class="label" colspan="2">${d.feePct ?? 4}% Fees*</td><td class="value">${fmt$(d.feeAmount ?? 0)}</td></tr>
+      <tr><td class="label" colspan="2">Total Cost</td><td class="value">${fmt$(totalCost)}</td></tr>
+      <tr><td class="label" colspan="2">Deposit</td><td class="value">${d.deposit ? fmt$(d.deposit) : ""}</td></tr>
+      <tr><td class="label" colspan="2">Balance Due</td><td class="value">${fmt$(balanceDue)}</td></tr>
+    </table>
+  </div>
+
+  <table class="comm-table">
+    <tr><td class="spacer" style="width:70%;"></td><td class="label">Charged to Client</td><td class="value">${d.chargedToClient != null ? fmt$(d.chargedToClient) : ""}</td></tr>
+    <tr><td class="spacer"></td><td class="label">Difference</td><td class="value">${signed$(d.difference)}</td></tr>
+    <tr><td class="spacer"></td><td class="label">${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% Commission on Sale</td><td class="value">${d.baseCommission != null ? fmt$(d.baseCommission) : ""}</td></tr>
+    <tr><td class="spacer"></td><td class="label">Commission Over/Under</td><td class="value">${d.overUnderComm ? signed$(d.overUnderComm) : "$0.00"}</td></tr>
+    <tr><td class="spacer"></td><td class="label">Total Commission</td><td class="value">${d.commission != null ? fmt$(d.commission) : ""}</td></tr>
+  </table>
+
+  <div class="version-tag">V-10.9<br>7/31/26</div>
+</body>
+</html>`;
+}
+
+function esc(s: string | null | undefined): string {
+  if (!s) return "";
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function buildCommissionSheet(d: ProposalData): string {
   // Same window/film/quantity listing as the proposal, but no customer-facing
   // pricing — just what film, how much, and the roll it comes from. Purely
