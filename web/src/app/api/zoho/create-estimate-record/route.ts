@@ -32,6 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getBooksConfig, searchBooksCustomer, createBooksCustomer,
   searchBooksItem, createBooksEstimate, findSyncedCrmEstimateRecord,
+  parseCityStateZip,
   type BooksEstimateLineItem,
 } from "@/lib/zoho";
 
@@ -87,12 +88,10 @@ function parseDateForBooks(displayDate: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function parseCityStateZip(csz?: string): { city: string; state: string; zip: string } {
-  if (!csz) return { city: "", state: "", zip: "" };
-  const match = csz.match(/^(.+?),\s*([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)?$/);
-  if (!match) return { city: "", state: "", zip: "" };
-  return { city: match[1].trim(), state: match[2].toUpperCase(), zip: match[3] || "" };
-}
+// Address parsing lives in @/lib/zoho now (parseCityStateZip) — shared with
+// submit-pricing/route.ts so both use the same tolerant parser (handles
+// missing commas, full state names, etc. instead of silently returning
+// blank fields that render as "null null null" on the Books estimate).
 
 export async function POST(request: NextRequest) {
   try {
@@ -202,6 +201,12 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 4. Create the Estimate in Books, linked to the CRM Deal ────────
+    // Installation address = the job-site address the rep typed into the
+    // calculator (same field used for Installation_Street/City/State/Zip
+    // on the Deal in submit-pricing/route.ts) — populates Books' own
+    // "Installation Address" custom field so it's never blank/"null null
+    // null" on the generated estimate.
+    const { city: installCity, state: installState, zip: installZip } = parseCityStateZip(body.cityStateZip);
     const result = await createBooksEstimate(orgId, {
       customerId,
       dealId: body.dealId,
@@ -209,6 +214,10 @@ export async function POST(request: NextRequest) {
       estimateDate: parseDateForBooks(body.date),
       salespersonName: body.userName,
       lineItems,
+      installationStreet: body.address,
+      installationCity: installCity,
+      installationState: installState,
+      installationZip: installZip,
     });
 
     // ── 5. Wait for Zoho's CRM↔Books sync to create the matching

@@ -15,6 +15,82 @@
  * - ZOHO_ACCOUNTS_URL  — e.g. https://accounts.zoho.com/oauth/v2/token
  */
 
+// Full state name -> USPS 2-letter abbreviation, so a rep typing "Denver,
+// Colorado 80202" or "Denver Colorado" doesn't silently fail to parse.
+const STATE_NAME_TO_ABBR: Record<string, string> = {
+  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA",
+  colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA",
+  hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA",
+  kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
+  massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS",
+  missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV",
+  "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM",
+  "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH",
+  oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI",
+  "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX",
+  utah: "UT", vermont: "VT", virginia: "VA", washington: "WA",
+  "west virginia": "WV", wisconsin: "WI", wyoming: "WY",
+  "district of columbia": "DC",
+};
+
+/**
+ * Parses a free-typed "City, State ZIP" string into its parts for Zoho's
+ * separate City/State/Zip fields. Tolerant of the messy real-world variants
+ * reps actually type — missing comma, full state name instead of the 2-letter
+ * abbreviation, extra whitespace — because a strict parser silently returning
+ * all-empty strings on any of those is exactly what caused "null null null"
+ * to get sent to Zoho as a literal address. Returns whatever it CAN parse
+ * rather than all-or-nothing.
+ */
+export function parseCityStateZip(csz?: string): { city: string; state: string; zip: string } {
+  if (!csz) return { city: "", state: "", zip: "" };
+  const trimmed = csz.trim().replace(/\s+/g, " ");
+  if (!trimmed) return { city: "", state: "", zip: "" };
+
+  // Pull the ZIP off the end first (5 digits, optionally +4), if present.
+  const zipMatch = trimmed.match(/(\d{5}(?:-\d{4})?)\s*$/);
+  const zip = zipMatch ? zipMatch[1] : "";
+  const withoutZip = (zipMatch ? trimmed.slice(0, zipMatch.index) : trimmed).replace(/,\s*$/, "").trim();
+
+  if (!withoutZip) return { city: "", state: "", zip };
+
+  // Split on a comma if present ("City, State"); otherwise fall back to
+  // splitting on the last whitespace-separated token(s) that match a known
+  // state name/abbreviation.
+  let cityPart = withoutZip;
+  let statePart = "";
+  const commaIdx = withoutZip.lastIndexOf(",");
+  if (commaIdx !== -1) {
+    cityPart = withoutZip.slice(0, commaIdx).trim();
+    statePart = withoutZip.slice(commaIdx + 1).trim();
+  } else {
+    // No comma — try matching a known full state name (possibly multi-word,
+    // e.g. "New York") at the end, then a bare 2-letter abbreviation.
+    const lower = withoutZip.toLowerCase();
+    let matchedName: string | null = null;
+    for (const name of Object.keys(STATE_NAME_TO_ABBR)) {
+      if (lower.endsWith(name) && (lower.length === name.length || lower[lower.length - name.length - 1] === " ")) {
+        if (!matchedName || name.length > matchedName.length) matchedName = name;
+      }
+    }
+    if (matchedName) {
+      cityPart = withoutZip.slice(0, withoutZip.length - matchedName.length).trim();
+      statePart = matchedName;
+    } else {
+      const abbrevMatch = withoutZip.match(/^(.+?)\s+([A-Za-z]{2})$/);
+      if (abbrevMatch) {
+        cityPart = abbrevMatch[1].trim();
+        statePart = abbrevMatch[2];
+      }
+    }
+  }
+
+  const stateAbbr = STATE_NAME_TO_ABBR[statePart.toLowerCase()] || (statePart.length === 2 ? statePart.toUpperCase() : "");
+
+  return { city: cityPart, state: stateAbbr, zip };
+}
+
+
 export interface ZohoConfig {
   clientId: string;
   clientSecret: string;
@@ -750,6 +826,14 @@ export async function createBooksEstimate(orgId: string, input: {
   paymentTerms?: string;
   termsAndConditions?: string;
   lineItems: BooksEstimateLineItem[];
+  // Job-site installation address — populates the Books estimate template's
+  // "Installation Address" custom field (api_name: cf_installation_address).
+  // Previously never sent, so the field defaulted to a placeholder that
+  // rendered literally as "null null null" on generated estimates.
+  installationStreet?: string;
+  installationCity?: string;
+  installationState?: string;
+  installationZip?: string;
 }): Promise<{ estimateId: string; estimateNumber: string }> {
   const estimateNumber = await nextBooksEstimateNumber(orgId, input.opportunityNumber, input.dealId);
 
@@ -768,6 +852,16 @@ export async function createBooksEstimate(orgId: string, input: {
   };
   if (input.salespersonName) payload.salesperson_name = input.salespersonName;
   if (input.termsAndConditions) payload.terms = input.termsAndConditions;
+
+  const installationAddressLines = [
+    input.installationStreet,
+    [input.installationCity, input.installationState, input.installationZip].filter(Boolean).join(" "),
+  ].filter((line) => line && line.trim()).join("\n");
+  if (installationAddressLines) {
+    payload.custom_fields = [
+      { api_name: "cf_installation_address", value: installationAddressLines },
+    ];
+  }
 
   const result = await booksApiCall("POST", "/estimates", orgId, payload) as {
     estimate?: { estimate_id?: string; estimate_number?: string };

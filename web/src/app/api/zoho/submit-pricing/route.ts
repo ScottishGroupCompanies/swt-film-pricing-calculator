@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   searchContact, createContact, searchAccount, createAccount, createDeal, addNote, appendSheetRow,
+  parseCityStateZip,
 } from "@/lib/zoho";
 
 interface PricingLineItem {
@@ -80,16 +81,8 @@ interface SubmitPricingRequest {
   opportunityName?: string;
 }
 
-// Parses "City, State ZIP" into its parts. Zoho stores these as separate
-// fields (Mailing_City/State/Zip, Billing_City/State1/Code,
-// Installation_City/State/Zip) so every address string coming from the
-// calculator needs this same split applied before it can be saved.
-function parseCityStateZip(csz?: string): { city: string; state: string; zip: string } {
-  if (!csz) return { city: "", state: "", zip: "" };
-  const match = csz.match(/^(.+?),\s*([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)?$/);
-  if (!match) return { city: "", state: "", zip: "" };
-  return { city: match[1].trim(), state: match[2].toUpperCase(), zip: match[3] || "" };
-}
+// Address parsing lives in @/lib/zoho now (parseCityStateZip) — shared with
+// create-estimate-record/route.ts so both use the same tolerant parser.
 
 export async function POST(request: NextRequest) {
   try {
