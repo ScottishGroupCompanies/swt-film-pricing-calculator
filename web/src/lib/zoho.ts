@@ -233,7 +233,15 @@ export async function searchContact(name: string, email?: string): Promise<ZohoC
     criteria = `(Last_Name:equals:${lastName})`;
   }
 
-  const result = await crmApiCall("GET", `/Contacts/search?criteria=${encodeURIComponent(criteria)}`) as { data?: ZohoCRMRecord[] };
+  // Explicitly request Account_Name — every Contact has ONE (Zoho
+  // auto-creates a personal Account per Contact even for plain
+  // Residential customers), and callers need it to link that same
+  // Account onto the Deal (required by this org's "Accounts & its
+  // contacts sync" Books setting — see submit-pricing/route.ts).
+  const result = await crmApiCall(
+    "GET",
+    `/Contacts/search?criteria=${encodeURIComponent(criteria)}&fields=First_Name,Last_Name,Email,Phone,Mobile,Mailing_Street,Mailing_City,Mailing_State,Mailing_Zip,Account_Name`
+  ) as { data?: ZohoCRMRecord[] };
   return result?.data?.[0] ?? null;
 }
 
