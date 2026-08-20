@@ -727,11 +727,22 @@ export async function booksApiCall(
  * Opportunities" step, but sync timing can vary.
  */
 export async function searchBooksCustomer(orgId: string, name: string): Promise<{ id: string; name: string } | null> {
+  // IMPORTANT: Zoho's /contacts endpoint silently drops search_text when
+  // contact_type is also present in the same query (confirmed via direct
+  // API testing — combining both params returns ALL contacts of that type,
+  // ignoring the name filter entirely). So we search by name only, then
+  // filter the results to contact_type=customer client-side. Without this
+  // filter, a vendor contact (e.g. a supplier/manufacturer) sharing the
+  // customer's name could get matched, and Zoho then rejects the Estimate
+  // creation with "Make sure that you have selected a contact of the
+  // correct contact type (customer/vendor)" (error code 3045) — a real
+  // production bug this filter fixes.
   const result = await booksApiCall("GET", `/contacts?search_text=${encodeURIComponent(name)}`, orgId) as {
-    contacts?: { contact_id: string; contact_name: string }[];
+    contacts?: { contact_id: string; contact_name: string; contact_type?: string }[];
   };
-  const match = result?.contacts?.find((c) => c.contact_name.toLowerCase() === name.toLowerCase())
-    || result?.contacts?.[0];
+  const customers = (result?.contacts ?? []).filter((c) => c.contact_type === "customer" || !c.contact_type);
+  const match = customers.find((c) => c.contact_name.toLowerCase() === name.toLowerCase())
+    || customers[0];
   return match ? { id: match.contact_id, name: match.contact_name } : null;
 }
 

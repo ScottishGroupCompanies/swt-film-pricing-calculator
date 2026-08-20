@@ -2570,6 +2570,33 @@ export default function PricingCalculator() {
                 )}
               </div>
             )}
+
+            {/* Generate Commission Sheet button — opens the editable
+                Commission Sheet PDF tab directly, without requiring the
+                separate "Generate Proposal" step. Matches the real flow:
+                fill out form -> Send to Zoho -> rep fills out the estimate
+                IN Zoho -> comes back here -> Generate Commission Sheet. */}
+            {zohoEnabled && zohoResult?.dealId && (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ height: 1, background: THEME.border, margin: "8px 0" }} />
+                <button
+                  onClick={() => {
+                    setShowProposals(true);
+                    setActiveTab("commissionPdf");
+                    if (proposalData && !commissionSheetExtras) {
+                      setCommissionSheetExtras(defaultCommissionSheetExtras(proposalData));
+                    }
+                  }}
+                  style={{
+                    width: "100%", padding: 10, background: THEME.green, color: "#fff",
+                    border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                    cursor: "pointer", fontFamily: "inherit",
+                  }}
+                >
+                  🧾 Generate Commission Sheet
+                </button>
+              </div>
+            )}
             <button
               onClick={resetJob}
               style={{
