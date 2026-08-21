@@ -22,14 +22,18 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { searchContactsFuzzy, searchDealsFuzzy, getRecord, type ZohoCRMRecord } from "@/lib/zoho";
+import {
+  searchContactsFuzzy, searchDealsFuzzy, searchLeadsFuzzy, searchAccountsFuzzy,
+  getRecord, type ZohoCRMRecord,
+} from "@/lib/zoho";
 
 function splitCityStateZip(city: string, state: string, zip: string): string {
-  return ([city, state].filter(Boolean).join(", ") + (zip ? ` ${zip}` : "")).trim();
+  const cleanZip = zip && zip !== "-" ? zip : "";
+  return ([city, state].filter(Boolean).join(", ") + (cleanZip ? ` ${cleanZip}` : "")).trim();
 }
 
 interface SearchResult {
-  type: "contact" | "deal";
+  type: "contact" | "deal" | "lead" | "account";
   id: string;
   dealId: string | null;
   opportunityNumber: string | null;
@@ -47,7 +51,9 @@ interface SearchResult {
   companyCityStateZip: string;
   companyPhone: string;
   companyEmail: string;
+  leadStatus: string | null;
 }
+
 
 async function formatContact(c: ZohoCRMRecord): Promise<SearchResult> {
   const firstName = (c.First_Name as string) || "";
@@ -82,6 +88,7 @@ async function formatContact(c: ZohoCRMRecord): Promise<SearchResult> {
     companyCityStateZip: "",
     companyPhone: "",
     companyEmail: "",
+    leadStatus: null,
   };
 
   if (!accountId) return base;
@@ -146,6 +153,70 @@ function formatDeal(d: ZohoCRMRecord): SearchResult {
     companyCityStateZip: "",
     companyPhone: "",
     companyEmail: "",
+    leadStatus: null,
+  };
+}
+
+function formatLead(l: ZohoCRMRecord): SearchResult {
+  const name = (l.Full_Name as string)
+    || `${(l.First_Name as string) || ""} ${(l.Last_Name as string) || ""}`.trim()
+    || "—";
+  const cityStateZip = splitCityStateZip(
+    (l.City as string) || "",
+    (l.State as string) || "",
+    (l.Zip_Code as string) || ""
+  );
+
+  return {
+    type: "lead",
+    id: l.id as string,
+    dealId: null,
+    opportunityNumber: null,
+    name,
+    email: (l.Email as string) || "",
+    phone: (l.Phone as string) || (l.Mobile as string) || "",
+    address: (l.Street as string) || "",
+    cityStateZip,
+    installationAddress: "",
+    installationCityStateZip: "",
+    isCommercial: !!(l.Company && l.Company !== name),
+    accountId: null,
+    companyName: (l.Company as string) || "",
+    companyAddress: (l.Street as string) || "",
+    companyCityStateZip: cityStateZip,
+    companyPhone: (l.Phone as string) || "",
+    companyEmail: (l.Email as string) || "",
+    leadStatus: (l.Lead_Status as string) || null,
+  };
+}
+
+function formatAccount(a: ZohoCRMRecord): SearchResult {
+  const companyCityStateZip = splitCityStateZip(
+    (a.Billing_City as string) || "",
+    (a.Billing_State1 as string) || "",
+    (a.Billing_Code as string) || ""
+  );
+
+  return {
+    type: "account",
+    id: a.id as string,
+    dealId: null,
+    opportunityNumber: null,
+    name: (a.Account_Name as string) || "—",
+    email: (a.Email as string) || "",
+    phone: (a.Phone as string) || "",
+    address: "",
+    cityStateZip: "",
+    installationAddress: "",
+    installationCityStateZip: "",
+    isCommercial: a.Account_Type === "Commercial",
+    accountId: a.id as string,
+    companyName: (a.Account_Name as string) || "",
+    companyAddress: (a.Billing_Street as string) || "",
+    companyCityStateZip,
+    companyPhone: (a.Phone as string) || "",
+    companyEmail: (a.Email as string) || "",
+    leadStatus: null,
   };
 }
 
@@ -157,20 +228,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, results: [] });
     }
 
-    const [contacts, deals] = await Promise.all([
-      searchContactsFuzzy(q, 8),
-      searchDealsFuzzy(q, 8),
+    const [contacts, deals, leads, accounts] = await Promise.all([
+      searchContactsFuzzy(q, 6),
+      searchDealsFuzzy(q, 6),
+      searchLeadsFuzzy(q, 6),
+      searchAccountsFuzzy(q, 6),
     ]);
 
-    const [formattedContacts, formattedDeals] = await Promise.all([
+    const [formattedContacts, formattedDeals, formattedLeads, formattedAccounts] = await Promise.all([
       Promise.all(contacts.map(formatContact)),
       Promise.resolve(deals.map(formatDeal)),
+      Promise.resolve(leads.map(formatLead)),
+      Promise.resolve(accounts.map(formatAccount)),
     ]);
 
     // Deals first — reopening a specific existing job (with its real
     // installation address) is usually what a rep searching by customer
-    // name is trying to do, ahead of a bare contact-only match.
-    const results = [...formattedDeals, ...formattedContacts];
+    // name is trying to do, ahead of a bare contact-only match. Then
+    // Accounts (real businesses), then Contacts, then Leads (least
+    // "ready" — no Deal/Account exists for these yet).
+    const results = [...formattedDeals, ...formattedAccounts, ...formattedContacts, ...formattedLeads];
 
     return NextResponse.json({ success: true, results });
   } catch (e) {

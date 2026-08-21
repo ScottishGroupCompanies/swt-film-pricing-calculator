@@ -278,6 +278,38 @@ export async function searchDealsFuzzy(query: string, limit = 10): Promise<ZohoC
 }
 
 /**
+ * Fuzzy-search Leads ("Prospects") by name/company — people who haven't
+ * been converted to a Contact/Deal yet. No installation address exists
+ * yet for these (no Deal), so picking one only prefills name/company/
+ * contact info, not a job address.
+ */
+export async function searchLeadsFuzzy(query: string, limit = 10): Promise<ZohoCRMRecord[]> {
+  if (!query || query.trim().length < 2) return [];
+  const fields = "Full_Name,First_Name,Last_Name,Company,Email,Phone,Mobile,Street,City,State,Zip_Code,Lead_Status";
+  const result = await crmApiCall(
+    "GET",
+    `/Leads/search?word=${encodeURIComponent(query.trim())}&fields=${fields}&per_page=${limit}`
+  ) as { data?: ZohoCRMRecord[] };
+  return result?.data ?? [];
+}
+
+/**
+ * Fuzzy-search Accounts (businesses) directly by name — separate from the
+ * exact-match searchAccount() used during Deal/Estimate creation. Lets a
+ * rep search "search previous jobs" by a business name and pull in its
+ * info directly, without needing an existing Contact/Deal to find it via.
+ */
+export async function searchAccountsFuzzy(query: string, limit = 10): Promise<ZohoCRMRecord[]> {
+  if (!query || query.trim().length < 2) return [];
+  const fields = "Account_Name,Phone,Email,Website,Billing_Street,Billing_City,Billing_State1,Billing_Code,Account_Type";
+  const result = await crmApiCall(
+    "GET",
+    `/Accounts/search?word=${encodeURIComponent(query.trim())}&fields=${fields}&per_page=${limit}`
+  ) as { data?: ZohoCRMRecord[] };
+  return result?.data ?? [];
+}
+
+/**
  * Create a new contact in Zoho CRM
  */
 export async function createContact(contact: {

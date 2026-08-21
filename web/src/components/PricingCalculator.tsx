@@ -399,7 +399,7 @@ function CurrentUserBadge({ user, onLogout }: { user: User | null; onLogout: () 
 // ─── CONTACT SEARCH PICKER (search previous Zoho contacts, autofill) ─────
 
 export interface ZohoContactResult {
-  type: "contact" | "deal";
+  type: "contact" | "deal" | "lead" | "account";
   id: string;
   dealId?: string | null;
   opportunityNumber?: string | null;
@@ -417,6 +417,7 @@ export interface ZohoContactResult {
   companyCityStateZip?: string;
   companyPhone?: string;
   companyEmail?: string;
+  leadStatus?: string | null;
 }
 
 function ContactSearchPicker({
@@ -565,7 +566,21 @@ function ContactSearchPicker({
             {results.map((c) => {
               const displayAddress = c.type === "deal"
                 ? [c.installationAddress, c.installationCityStateZip].filter(Boolean).join(", ")
-                : [c.address, c.cityStateZip].filter(Boolean).join(", ");
+                : c.type === "account"
+                  ? [c.companyAddress, c.companyCityStateZip].filter(Boolean).join(", ")
+                  : [c.address, c.cityStateZip].filter(Boolean).join(", ");
+              const badgeLabel = c.type === "deal"
+                ? (c.opportunityNumber || "Job")
+                : c.type === "account"
+                  ? "Account"
+                  : c.type === "lead"
+                    ? (c.leadStatus ? `Lead · ${c.leadStatus}` : "Lead")
+                    : "Contact";
+              const badgeColors = c.type === "deal" || c.type === "account"
+                ? { bg: THEME.greenBg, fg: THEME.greenDark }
+                : c.type === "lead"
+                  ? { bg: "#fff8e6", fg: "#8a6d1a" }
+                  : { bg: THEME.lightGray, fg: THEME.textMuted };
               return (
                 <div
                   key={`${c.type}-${c.id}-${c.dealId || ""}`}
@@ -583,10 +598,10 @@ function ContactSearchPicker({
                     <span style={{
                       fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em",
                       padding: "2px 6px", borderRadius: 4,
-                      background: c.type === "deal" ? THEME.greenBg : THEME.lightGray,
-                      color: c.type === "deal" ? THEME.greenDark : THEME.textMuted,
+                      background: badgeColors.bg,
+                      color: badgeColors.fg,
                     }}>
-                      {c.type === "deal" ? (c.opportunityNumber || "Job") : "Contact"}
+                      {badgeLabel}
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: THEME.textMuted, marginTop: 2 }}>
@@ -849,8 +864,6 @@ export default function PricingCalculator() {
   const [zohoStatus, setZohoStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [zohoResult, setZohoResult] = useState<{ contactId?: string; dealId?: string; opportunityNumber?: string | null; sheetRowAdded?: boolean; errors?: string[] } | null>(null);
   const [zohoEnabled, setZohoEnabled] = useState<boolean | null>(null);
-  const [estimateStatus, setEstimateStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
-  const [estimateResult, setEstimateResult] = useState<{ attachedTo?: string; pdfUrl?: string; errors?: string[] } | null>(null);
   const [estimateRecordStatus, setEstimateRecordStatus] = useState<"idle" | "submitting" | "success" | "error" | "not_configured">("idle");
   const [estimateRecordResult, setEstimateRecordResult] = useState<{ estimateId?: string; estimateNumber?: string; crmRecordId?: string | null; estimateUrl?: string | null; syncPending?: boolean; error?: string } | null>(null);
 
@@ -1025,12 +1038,6 @@ export default function PricingCalculator() {
     effectiveOpportunityName,
   ]);
 
-  function generateProposals() {
-    if (!totals.total) return;
-    setShowProposals(true);
-    setActiveTab("customer");
-  }
-
   function handlePrint() {
     if (!proposalData) return;
     if (activeTab === "commission") {
@@ -1129,8 +1136,6 @@ export default function PricingCalculator() {
     setChargedToClient("");
     setZohoStatus("idle");
     setZohoResult(null);
-    setEstimateStatus("idle");
-    setEstimateResult(null);
     setEstimateRecordStatus("idle");
     setEstimateRecordResult(null);
     setDiscountEnabled(false);
@@ -1172,36 +1177,6 @@ export default function PricingCalculator() {
     } catch (e) {
       setZohoResult({ errors: [e instanceof Error ? e.message : "Network error"] });
       setZohoStatus("error");
-    }
-  }
-
-  async function generateEstimate() {
-    if (!proposalData) return;
-    setEstimateStatus("submitting");
-    setEstimateResult(null);
-
-    try {
-      const resp = await fetch("/api/zoho/generate-estimate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...proposalData,
-          contactId: zohoResult?.contactId,
-          dealId: zohoResult?.dealId,
-        }),
-      });
-      const data = await resp.json();
-
-      if (data.success) {
-        setEstimateResult(data);
-        setEstimateStatus("success");
-      } else {
-        setEstimateResult(data);
-        setEstimateStatus("error");
-      }
-    } catch (e) {
-      setEstimateResult({ errors: [e instanceof Error ? e.message : "Network error"] });
-      setEstimateStatus("error");
     }
   }
 
@@ -1382,6 +1357,43 @@ export default function PricingCalculator() {
                     // Deal search result doesn't carry full contact detail
                     // (phone/email), and reusing the wrong contact record
                     // would be worse than just creating a fresh one.
+                    setExistingContactId(null);
+                  } else if (c.type === "account") {
+                    // Picking a business Account directly — prefill the
+                    // Commercial company fields. No specific contact person
+                    // is known from an Account alone, so leave that blank
+                    // for the rep to fill in.
+                    setJobType("Commercial");
+                    setCompanyName(c.companyName || c.name);
+                    setCompanyAddress(c.companyAddress || "");
+                    setCompanyCityStateZip(c.companyCityStateZip || "");
+                    setCompanyPhone(c.companyPhone || "");
+                    setCompanyEmail(c.companyEmail || "");
+                    setExistingContactId(null);
+                  } else if (c.type === "lead") {
+                    // Picking a Lead ("Prospect") — no Deal/installation
+                    // address exists yet, so just prefill name/company/
+                    // contact info. Not marking existingContactId since a
+                    // Lead isn't a Contact record.
+                    if (c.isCommercial) {
+                      setJobType("Commercial");
+                      setCompanyName(c.companyName || "");
+                      setCompanyAddress(c.companyAddress || "");
+                      setCompanyCityStateZip(c.companyCityStateZip || "");
+                      setCompanyPhone(c.companyPhone || "");
+                      setCompanyEmail(c.companyEmail || "");
+                      setContactPersonName(c.name);
+                      setContactPersonPhone(c.phone);
+                      setContactPersonEmail(c.email);
+                      setCustomer(c.name);
+                    } else {
+                      setJobType("Residential");
+                      setCustomer(c.name);
+                      setAddress(c.address);
+                      setCityStateZip(c.cityStateZip);
+                      setPhone(c.phone);
+                      setEmail(c.email);
+                    }
                     setExistingContactId(null);
                   } else if (c.isCommercial) {
                     // Commercial contact — split Business (Account) fields
@@ -2281,20 +2293,6 @@ export default function PricingCalculator() {
           {/* Action buttons */}
           <div style={{ padding: isMobile ? "14px" : 16, display: "flex", flexDirection: "column", gap: 8, marginTop: "auto" }}>
             <button
-              onClick={generateProposals}
-              disabled={!totals.total}
-              style={{
-                width: "100%", padding: 12, background: THEME.green, color: "#fff",
-                border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600,
-                cursor: "pointer", fontFamily: "inherit",
-                opacity: !totals.total ? 0.4 : 1,
-                boxShadow: `0 4px 12px ${THEME.green}40`,
-                transition: "all 0.15s",
-              }}
-            >
-              Generate Proposal
-            </button>
-            <button
               onClick={handlePrint}
               disabled={!totals.total}
               style={{
@@ -2399,82 +2397,6 @@ export default function PricingCalculator() {
                 fontSize: 10, color: THEME.textMuted, textAlign: "center",
               }}>
                 Zoho integration not configured
-              </div>
-            )}
-
-            {/* Generate Estimate button — creates a formatted estimate note on the Deal */}
-            {zohoEnabled && totals.total && zohoResult?.dealId && (
-              <div style={{ marginTop: 4 }}>
-                <div style={{ height: 1, background: THEME.border, margin: "8px 0" }} />
-                {estimateStatus === "idle" && (
-                  <button
-                    onClick={generateEstimate}
-                    style={{
-                      width: "100%", padding: 10, background: THEME.green, color: "#fff",
-                      border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                      cursor: "pointer", fontFamily: "inherit",
-                    }}
-                  >
-                    📄 Generate Estimate in Zoho
-                  </button>
-                )}
-                {estimateStatus === "submitting" && (
-                  <div style={{
-                    padding: 10, background: THEME.lightGray, borderRadius: 8,
-                    textAlign: "center", fontSize: 12, color: THEME.textMuted,
-                  }}>
-                    <span style={{ display: "inline-block", animation: "spin 1s linear infinite", marginRight: 6 }}>⟳</span>
-                    Generating estimate…
-                  </div>
-                )}
-                {estimateStatus === "success" && (
-                  <div style={{
-                    padding: 10, background: THEME.greenBg,
-                    border: `1px solid ${THEME.greenBorder}`, borderRadius: 8,
-                    fontSize: 12, color: THEME.greenDark,
-                  }}>
-                    ✅ Estimate PDF generated!
-                    {estimateResult?.attachedTo && (
-                      <div style={{ fontSize: 10, color: THEME.textMuted, marginTop: 4 }}>
-                        Linked on {estimateResult.attachedTo}
-                      </div>
-                    )}
-                    {estimateResult?.pdfUrl && (
-                      <div style={{ marginTop: 6 }}>
-                        <a
-                          href={estimateResult.pdfUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ fontSize: 11, color: THEME.greenDark, fontWeight: 600, textDecoration: "underline" }}
-                        >
-                          📄 View / Download PDF
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {estimateStatus === "error" && (
-                  <div style={{
-                    padding: 10, background: "#fef2f2",
-                    border: "1px solid #fecaca", borderRadius: 8,
-                    fontSize: 12, color: "#e04d46",
-                  }}>
-                    ❌ Estimate creation failed
-                    {estimateResult?.errors?.map((err, i) => (
-                      <div key={i} style={{ fontSize: 10, marginTop: 2 }}>{err}</div>
-                    ))}
-                    <button
-                      onClick={() => { setEstimateStatus("idle"); setEstimateResult(null); }}
-                      style={{
-                        marginTop: 6, padding: "3px 8px", background: "transparent",
-                        border: `1px solid #fecaca`, borderRadius: 4,
-                        fontSize: 11, color: "#e04d46", cursor: "pointer", fontFamily: "inherit",
-                      }}
-                    >
-                      Try again
-                    </button>
-                  </div>
-                )}
               </div>
             )}
 
