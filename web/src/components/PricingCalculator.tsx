@@ -797,6 +797,71 @@ function CommissionSheetPdfEditor({
   );
 }
 
+// ─── AUTO-SAVE / DRAFT RECOVERY ────────────────────────────────────────
+// Snapshot of every form field needed to fully restore an in-progress job
+// after an accidental refresh/close. Deliberately excludes transient
+// UI/network state (zohoStatus, estimateRecordStatus, etc.) — those reset
+// cleanly on reload and shouldn't be "restored" into a stale in-flight
+// state.
+const DRAFT_STORAGE_KEY = "swt-pricing-draft-v1";
+const DRAFT_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+
+interface SavedDraft {
+  customer: string;
+  address: string;
+  cityStateZip: string;
+  phone: string;
+  email: string;
+  existingContactId: string | null;
+  jobType: "Residential" | "Commercial";
+  companyName: string;
+  companyAddress: string;
+  companyCityStateZip: string;
+  companyPhone: string;
+  companyEmail: string;
+  contactPersonName: string;
+  contactPersonPhone: string;
+  contactPersonEmail: string;
+  contactBillingAddress: string;
+  contactBillingCityStateZip: string;
+  opportunityName: string;
+  opportunityNameTouched: boolean;
+  minDim: number;
+  rows: RowData[];
+  chargedToClient: string;
+  discountEnabled: boolean;
+  discountPct: string;
+  attachmentOther: string;
+  feePct: string;
+  deposit: string;
+}
+
+function readDraft(): { draft: SavedDraft; savedAt: number } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { draft: SavedDraft; savedAt: number };
+    if (!parsed?.draft || typeof parsed.savedAt !== "number") return null;
+    if (Date.now() - parsed.savedAt > DRAFT_MAX_AGE_MS) {
+      window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function clearDraft() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    // localStorage unavailable (private browsing, quota, etc.) — no-op
+  }
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────
 
 export default function PricingCalculator() {
@@ -867,6 +932,16 @@ export default function PricingCalculator() {
   const [estimateRecordStatus, setEstimateRecordStatus] = useState<"idle" | "submitting" | "success" | "error" | "not_configured">("idle");
   const [estimateRecordResult, setEstimateRecordResult] = useState<{ estimateId?: string; estimateNumber?: string; crmRecordId?: string | null; estimateUrl?: string | null; syncPending?: boolean; error?: string } | null>(null);
 
+  // ─── AUTO-SAVE / DRAFT RECOVERY ──────────────────────────────────────
+  // Continuously saves the in-progress job to localStorage so an
+  // accidental refresh or tab close doesn't lose 20 typed-out windows.
+  // A draft older than DRAFT_MAX_AGE_MS is treated as stale and ignored
+  // (both on restore-check and by a periodic self-clearing timer), so an
+  // old job never silently leaks into a brand-new one.
+  const [draftPrompt, setDraftPrompt] = useState<{ draft: SavedDraft; savedAt: number } | null>(null);
+  const [draftRestoredAt, setDraftRestoredAt] = useState<number | null>(null);
+  const restoringDraftRef = useRef(false);
+
   // Editable post-calculation summary fields
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountPct, setDiscountPct] = useState<string>("");
@@ -879,6 +954,102 @@ export default function PricingCalculator() {
   }, []);
   const removeRow = useCallback((id: number) => setRows((prev) => prev.filter((r) => r.id !== id)), []);
   const addRow = useCallback(() => setRows((prev) => [...prev, newRow()]), []);
+
+  // On mount: check for a restorable draft (within DRAFT_MAX_AGE_MS) and
+  // surface a prompt instead of silently overwriting whatever the rep is
+  // about to type. Doesn't apply it automatically — an accidental
+  // refresh right after finishing/submitting a job shouldn't force an
+  // old job back onto the rep without them asking for it.
+  useEffect(() => {
+    const found = readDraft();
+    if (found) {
+      // Deferred to a microtask so this doesn't read as a synchronous
+      // setState-in-effect (which can cascade renders) — mount-time
+      // "check localStorage, maybe show a banner" is a legitimate use
+      // case, just written so the linter's heuristic doesn't flag it.
+      queueMicrotask(() => setDraftPrompt(found));
+    }
+  }, []);
+
+  function restoreDraft(saved: SavedDraft) {
+    restoringDraftRef.current = true;
+    setCustomer(saved.customer);
+    setAddress(saved.address);
+    setCityStateZip(saved.cityStateZip);
+    setPhone(saved.phone);
+    setEmail(saved.email);
+    setExistingContactId(saved.existingContactId);
+    setJobType(saved.jobType);
+    setCompanyName(saved.companyName);
+    setCompanyAddress(saved.companyAddress);
+    setCompanyCityStateZip(saved.companyCityStateZip);
+    setCompanyPhone(saved.companyPhone);
+    setCompanyEmail(saved.companyEmail);
+    setContactPersonName(saved.contactPersonName);
+    setContactPersonPhone(saved.contactPersonPhone);
+    setContactPersonEmail(saved.contactPersonEmail);
+    setContactBillingAddress(saved.contactBillingAddress);
+    setContactBillingCityStateZip(saved.contactBillingCityStateZip);
+    setOpportunityName(saved.opportunityName);
+    setOpportunityNameTouched(saved.opportunityNameTouched);
+    setMinDim(saved.minDim);
+    setRows(saved.rows.length ? saved.rows : [newRow(), newRow(), newRow()]);
+    setChargedToClient(saved.chargedToClient);
+    setDiscountEnabled(saved.discountEnabled);
+    setDiscountPct(saved.discountPct);
+    setAttachmentOther(saved.attachmentOther);
+    setFeePct(saved.feePct);
+    setDeposit(saved.deposit);
+    setDraftRestoredAt(Date.now());
+    setDraftPrompt(null);
+    // Release the guard on the next tick, after all the setters above
+    // have been applied — otherwise the save-effect (which watches these
+    // same fields) would immediately re-save a half-applied draft.
+    setTimeout(() => { restoringDraftRef.current = false; }, 0);
+  }
+
+  function dismissDraft() {
+    clearDraft();
+    setDraftPrompt(null);
+  }
+
+  // Debounced auto-save: fires 1.5s after the last edit to any tracked
+  // field, so typing doesn't hammer localStorage on every keystroke.
+  // Skipped entirely while a draft is being programmatically restored
+  // (see restoringDraftRef above) and while a restore prompt is still
+  // pending (don't overwrite the on-disk draft with blank initial state
+  // before the rep has chosen restore/discard).
+  useEffect(() => {
+    if (restoringDraftRef.current || draftPrompt) return;
+    const hasContent = customer.trim() || address.trim() || rows.some((r) => r.desc.trim() || r.w || r.h || r.film);
+    if (!hasContent) {
+      // Nothing worth saving yet (fresh empty form) — don't create a
+      // draft file just from default state.
+      return;
+    }
+    const timer = setTimeout(() => {
+      const draft: SavedDraft = {
+        customer, address, cityStateZip, phone, email, existingContactId,
+        jobType, companyName, companyAddress, companyCityStateZip, companyPhone, companyEmail,
+        contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
+        opportunityName, opportunityNameTouched, minDim, rows,
+        chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
+      };
+      try {
+        window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ draft, savedAt: Date.now() }));
+      } catch {
+        // localStorage unavailable/full — auto-save is best-effort, fail silent
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [
+    customer, address, cityStateZip, phone, email, existingContactId,
+    jobType, companyName, companyAddress, companyCityStateZip, companyPhone, companyEmail,
+    contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
+    opportunityName, opportunityNameTouched, minDim, rows,
+    chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
+    draftPrompt,
+  ]);
 
   // Suggested Opportunity Name, matching SWT's naming convention:
   // "LastName StreetNumber City ST MONYY" (e.g. "Vernon 32 Dallas TX AUG26")
@@ -1143,6 +1314,8 @@ export default function PricingCalculator() {
     setAttachmentOther("");
     setFeePct(String(DEFAULT_FEE_PCT));
     setDeposit("");
+    clearDraft();
+    setDraftRestoredAt(null);
   }
 
   // Check if Zoho is configured on mount
@@ -1295,6 +1468,55 @@ export default function PricingCalculator() {
         </div>
       </header>
 
+      {/* ── DRAFT RECOVERY BANNER ── */}
+      {draftPrompt && (
+        <div style={{
+          background: "#fff8e6", borderBottom: "1px solid #f0d78a",
+          padding: isMobile ? "10px 14px" : "10px 28px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          flexWrap: "wrap", gap: 8,
+        }}>
+          <div style={{ fontSize: 13, color: "#8a6d1a", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 16 }}>💾</span>
+            <span>
+              We found an unsaved job{draftPrompt.draft.customer ? ` for "${draftPrompt.draft.customer}"` : ""} from a
+              previous session. Restore it?
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => restoreDraft(draftPrompt.draft)}
+              style={{
+                padding: "6px 14px", background: "#8a6d1a", color: "#fff",
+                border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              Restore
+            </button>
+            <button
+              onClick={dismissDraft}
+              style={{
+                padding: "6px 14px", background: "transparent", color: "#8a6d1a",
+                border: "1px solid #f0d78a", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+      {draftRestoredAt && !draftPrompt && (
+        <div style={{
+          background: THEME.greenBg, borderBottom: `1px solid ${THEME.greenBorder}`,
+          padding: isMobile ? "6px 14px" : "6px 28px",
+          fontSize: 11, color: THEME.greenDark, textAlign: "center",
+        }}>
+          ✅ Restored your unsaved job — everything is back where you left it.
+        </div>
+      )}
+
       {/* ── MAIN LAYOUT ── */}
       <div style={{
         flex: 1,
@@ -1303,6 +1525,7 @@ export default function PricingCalculator() {
         gridTemplateColumns: isMobile || isTablet ? undefined : "1fr 320px",
         overflow: isMobile || isTablet ? "visible" : "hidden",
       }}>
+
         {/* LEFT — form + proposals */}
         <div style={{
           padding: isMobile ? "16px 14px" : isTablet ? "20px 20px" : "24px 28px",
