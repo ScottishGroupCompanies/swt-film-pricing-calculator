@@ -15,6 +15,8 @@ import {
   searchContact, createContact, searchAccount, createAccount, createDeal, addNote, appendSheetRow,
   parseCityStateZip,
 } from "@/lib/zoho";
+import { getSessionUserId } from "@/lib/sessionCookies";
+import { findUserById } from "@/lib/auth";
 
 interface PricingLineItem {
   desc: string;
@@ -195,6 +197,12 @@ export async function POST(request: NextRequest) {
       const dealDescription = buildDealDescription(body);
       const { city: installCity, state: installState, zip: installZip } = parseCityStateZip(body.cityStateZip);
 
+      // Owner = the currently logged-in rep's real Zoho user ID (from their
+      // server-side session, never trusted from client input) — makes them
+      // the Opportunity Owner in Zoho, as requested.
+      const sessionUserId = await getSessionUserId();
+      const sessionUser = sessionUserId ? findUserById(sessionUserId) : null;
+
       const dealResult = await createDeal({
         dealName,
         contactId: results.contactId || undefined,
@@ -203,6 +211,7 @@ export async function POST(request: NextRequest) {
         stage: "Qualification",
         description: dealDescription,
         userName: body.userName,
+        ownerZohoUserId: sessionUser?.zohoUserId,
         jobType: body.jobType,
         installationStreet: body.address,
         installationCity: installCity,

@@ -21,6 +21,7 @@ const USER_OPTIONS = [
   { id: "katie", name: "Katie" },
   { id: "mike", name: "Mike" },
   { id: "jenny", name: "Jenny" },
+  { id: "admin", name: "Admin" },
 ];
 
 function LoginForm() {

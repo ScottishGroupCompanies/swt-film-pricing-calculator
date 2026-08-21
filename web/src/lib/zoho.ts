@@ -370,6 +370,7 @@ export async function createDeal(deal: {
   stage?: string;
   description?: string;
   userName?: string;
+  ownerZohoUserId?: string; // real Zoho CRM user ID — sets Deal.Owner so the logged-in rep is the Opportunity Owner
   jobType?: "Residential" | "Commercial"; // maps to the Deal's "Type" field
   installationStreet?: string;
   installationCity?: string;
@@ -390,8 +391,8 @@ export async function createDeal(deal: {
   if (deal.installationCity) record.Installation_City = deal.installationCity;
   if (deal.installationState) record.Installation_State = deal.installationState;
   if (deal.installationZip) record.Installation_Zip = deal.installationZip;
-  // Owner should be a user lookup — skip for now, it needs a user ID not a name
-  // if (deal.userName) record.Owner = deal.userName;
+  // Owner is a user lookup — needs a real Zoho user ID, not a display name.
+  if (deal.ownerZohoUserId) record.Owner = { id: deal.ownerZohoUserId };
 
   const result = await crmApiCall("POST", "/Deals", { data: [record] }) as { data?: { details?: { id?: string } }[] };
   const id = result?.data?.[0]?.details?.id;

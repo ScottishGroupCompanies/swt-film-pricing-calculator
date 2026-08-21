@@ -30,6 +30,12 @@ export const SERVER_USERS: ServerUser[] = [
   { id: "katie", name: "Katie", loc: "Arizona",   glassRate: null, filmRate: 0,    passwordHash: hash("0000"), zohoUserId: "6168763000002178001" },
   { id: "mike",  name: "Mike",  loc: "Tennessee", glassRate: null, filmRate: 0,    passwordHash: hash("0000"), zohoUserId: "6168763000003583005" },
   { id: "jenny", name: "Jenny", loc: "Colorado",  glassRate: null, filmRate: 0.05, passwordHash: hash("1111"), zohoUserId: "6168763000038970001" },
+  // Admin test account — used to check whether logging estimates/deals in
+  // as a real Zoho ADMIN (rather than a regular rep) resolves the "Account
+  // is mandatory" / Permission Denied issue seen when filling out
+  // estimates. zohoUserId confirmed live via Modified_By on real CRM
+  // records (Scottish Window Tinting Admin).
+  { id: "admin", name: "Admin", loc: "Colorado",  glassRate: null, filmRate: 0.05, passwordHash: hash("0000"), zohoUserId: "6168763000000456001" },
 ];
 
 export function findUserById(id: string): ServerUser | null {
