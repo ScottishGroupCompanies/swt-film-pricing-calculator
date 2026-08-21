@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   searchContact, createContact, searchAccount, createAccount, createDeal, addNote, appendSheetRow,
-  parseCityStateZip, getRecord,
+  parseCityStateZip,
 } from "@/lib/zoho";
 
 interface PricingLineItem {
@@ -110,23 +110,10 @@ export async function POST(request: NextRequest) {
     const isCommercial = body.jobType === "Commercial";
 
     // ── 1. Resolve Contact in CRM (reuse existing, or find/create) ─────
-    // Moved BEFORE Account resolution: for Residential jobs, the Account
-    // we need is whatever Zoho already auto-created/linked for this exact
-    // Contact — not a fresh Account searched/created by the customer's
-    // typed name (which would create a DUPLICATE, since Zoho's own
-    // auto-generated Account name for a Contact often doesn't match the
-    // person's name at all — confirmed on real data, e.g. one Contact's
-    // auto-linked Account is named after an unrelated company).
     try {
       if (body.existingContactId) {
-        // Rep selected an existing contact via the search picker — reuse it,
-        // and fetch its own auto-linked Account (needed below).
+        // Rep selected an existing contact via the search picker — reuse it.
         results.contactId = body.existingContactId;
-        const existingContact = await getRecord("Contacts", body.existingContactId);
-        const existingAccountLookup = existingContact?.Account_Name as { id?: string; name?: string } | null | undefined;
-        if (existingAccountLookup?.id) {
-          results.accountId = existingAccountLookup.id;
-        }
       } else {
         // For Commercial jobs, the Contact is the specific person (facility
         // manager, etc.), separate from the Account (the business). The
@@ -153,44 +140,32 @@ export async function POST(request: NextRequest) {
             : { street: body.address, csz: body.cityStateZip };
           const { city: mailingCity, state: mailingState, zip: mailingZip } = parseCityStateZip(billingSource.csz);
 
-          const newContactId = await createContact({
-            firstName,
-            lastName,
-            email: isCommercial ? body.contactPersonEmail || body.email : body.email,
-            phone: isCommercial ? body.contactPersonPhone || body.phone : body.phone,
-            mailingStreet: billingSource.street,
-            mailingCity,
-            mailingState,
-            mailingZip,
-          });
-          // Re-fetch so we can read back the Account_Name Zoho auto-linked
-          // on creation (needed below for Residential Account resolution).
-          contact = (await getRecord("Contacts", newContactId)) || { id: newContactId };
+          contact = {
+            id: await createContact({
+              firstName,
+              lastName,
+              email: isCommercial ? body.contactPersonEmail || body.email : body.email,
+              phone: isCommercial ? body.contactPersonPhone || body.phone : body.phone,
+              mailingStreet: billingSource.street,
+              mailingCity,
+              mailingState,
+              mailingZip,
+            }),
+          };
         }
 
-        results.contactId = contact ? (contact.id as string) : null;
-        // Stash the Contact's own auto-linked Account for step 2 below.
-        const contactAccountLookup = contact?.Account_Name as { id?: string; name?: string } | null | undefined;
-        if (contactAccountLookup?.id) {
-          results.accountId = contactAccountLookup.id;
-        }
+        results.contactId = (contact.id as string) || null;
       }
     } catch (e) {
       results.errors.push(`Contact creation failed: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // ── 2. Resolve Account — REQUIRED for every job, not just Commercial.
-    //       This Zoho org has "Accounts & its contacts sync" enabled in
-    //       Books, which means every CRM Deal must have a real Account
-    //       linked before a Books transaction (Estimate) can be created
-    //       against it — omitting this for Residential jobs caused
-    //       "Account is mandatory for this Potential to create a
-    //       transaction" / Permission Denied when filling out the
-    //       estimate.
-    //   Commercial: search/create a real business Account by company name.
-    //   Residential: reuse the Account already auto-linked to the Contact
-    //     above (results.accountId, if set) — only search/create a
-    //     fallback by the customer's own name if the Contact had none.
+    // ── 2. Resolve Account (Commercial only) — the business itself, as a
+    //       real Zoho Account record, separate from the Contact. NOTE:
+    //       Residential jobs deliberately do NOT get an Account linked —
+    //       this matches the original behavior (Contact-only). An
+    //       Account-linking experiment for Residential jobs was tried and
+    //       then explicitly reverted per Jenny's request.
     if (isCommercial && body.companyName?.trim()) {
       try {
         const companyName = body.companyName.trim();
@@ -204,31 +179,6 @@ export async function POST(request: NextRequest) {
             phone: body.companyPhone,
             email: body.companyEmail,
             billingStreet: body.companyAddress,
-            billingCity: city,
-            billingState: state,
-            billingZip: zip,
-          });
-        }
-      } catch (e) {
-        results.errors.push(`Account creation failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    } else if (!results.accountId && body.customer?.trim()) {
-      // Fallback: the Contact somehow has no Account linked (shouldn't
-      // normally happen — Zoho auto-creates one per Contact) — create one
-      // under the customer's own name so the Deal always has something to
-      // link, per explicit confirmation this is the desired fallback.
-      try {
-        const accountName = body.customer.trim();
-        const existingAccount = await searchAccount(accountName);
-        if (existingAccount?.id) {
-          results.accountId = existingAccount.id as string;
-        } else {
-          const { city, state, zip } = parseCityStateZip(body.cityStateZip);
-          results.accountId = await createAccount({
-            accountName,
-            phone: body.phone,
-            email: body.email,
-            billingStreet: body.address,
             billingCity: city,
             billingState: state,
             billingZip: zip,
