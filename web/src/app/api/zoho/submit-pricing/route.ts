@@ -13,7 +13,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   searchContact, createContact, searchAccount, createAccount, createDeal, addNote, appendSheetRow,
-  parseCityStateZip, getRecord,
+  parseCityStateZip, getRecord, updateRecord,
+  type ZohoCRMRecord,
 } from "@/lib/zoho";
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { findUserById } from "@/lib/auth";
@@ -237,6 +238,42 @@ export async function POST(request: NextRequest) {
         }
       } catch (e) {
         results.errors.push(`Account creation failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    // Books imports the CRM *account*. A commercial contact created above
+    // is still pointing at Zoho's auto personal account, so the import
+    // would bring the company over with no contact person. Point the
+    // contact at the business account first.
+    if (isCommercial && results.contactId && results.accountId) {
+      try {
+        await updateRecord("Contacts", results.contactId, {
+          Account_Name: { id: results.accountId },
+        });
+      } catch (e) {
+        results.errors.push(`Could not link the contact to the business account: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    // Residential deals reuse the account Zoho auto-created for the
+    // contact. That account often has a city and nothing else, which
+    // Books then renders as "Centennial null null". Write the parsed
+    // billing address onto it before the estimate imports the account.
+    if (!isCommercial && results.accountId) {
+      try {
+        const { city, state, zip } = parseCityStateZip(body.cityStateZip);
+        const fields: ZohoCRMRecord = {};
+        if (body.address?.trim()) fields.Billing_Street = body.address.trim();
+        if (city) fields.Billing_City = city;
+        if (state) fields.Billing_State1 = state;
+        if (zip) fields.Billing_Code = zip;
+        if (body.phone?.trim()) fields.Phone = body.phone.trim();
+        if (body.email?.trim()) fields.Email = body.email.trim();
+        if (Object.keys(fields).length) {
+          await updateRecord("Accounts", results.accountId, fields);
+        }
+      } catch (e) {
+        results.errors.push(`Could not save the account billing address: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 

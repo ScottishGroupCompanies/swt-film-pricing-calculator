@@ -8,6 +8,7 @@ import {
   fmt$, fmtSF, getCommRate, getOverUnderComm, calcRowGeometry, newRow, initials,
   type User, type Film, type RowData, type RowCalc,
 } from "@/lib/pricingData";
+import { parseCityStateZip } from "@/lib/address";
 import {
   buildCustomerProposal, buildInternalRecord, buildCommissionSheet, buildPrintableHTML,
   defaultCommissionSheetExtras,
@@ -927,10 +928,10 @@ export default function PricingCalculator() {
   const [showProposals, setShowProposals] = useState(false);
   const [chargedToClient, setChargedToClient] = useState<string>("");
   const [zohoStatus, setZohoStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
-  const [zohoResult, setZohoResult] = useState<{ contactId?: string; dealId?: string; opportunityNumber?: string | null; sheetRowAdded?: boolean; errors?: string[] } | null>(null);
+  const [zohoResult, setZohoResult] = useState<{ contactId?: string; accountId?: string; dealId?: string; opportunityNumber?: string | null; sheetRowAdded?: boolean; errors?: string[] } | null>(null);
   const [zohoEnabled, setZohoEnabled] = useState<boolean | null>(null);
   const [estimateRecordStatus, setEstimateRecordStatus] = useState<"idle" | "submitting" | "success" | "error" | "not_configured">("idle");
-  const [estimateRecordResult, setEstimateRecordResult] = useState<{ estimateId?: string; estimateNumber?: string; crmRecordId?: string | null; estimateUrl?: string | null; syncPending?: boolean; error?: string } | null>(null);
+  const [estimateRecordResult, setEstimateRecordResult] = useState<{ estimateId?: string; estimateNumber?: string; crmRecordId?: string | null; estimateUrl?: string | null; syncPending?: boolean; customerLinked?: boolean; linkWarning?: string; warnings?: string[]; error?: string } | null>(null);
 
   // ─── AUTO-SAVE / DRAFT RECOVERY ──────────────────────────────────────
   // Continuously saves the in-progress job to localStorage so an
@@ -1058,9 +1059,9 @@ export default function PricingCalculator() {
     const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : (nameParts[0] || "");
     const streetNumMatch = address.match(/^\s*(\d+)/);
     const streetNum = streetNumMatch ? streetNumMatch[1] : "";
-    const cszMatch = cityStateZip.match(/^(.+?),\s*([A-Za-z]{2})\b/);
-    const city = cszMatch ? cszMatch[1].trim() : "";
-    const state = cszMatch ? cszMatch[2].toUpperCase() : "";
+    const parsedCsz = parseCityStateZip(cityStateZip);
+    const city = parsedCsz.city;
+    const state = parsedCsz.state;
     const monYY = new Date().toLocaleDateString("en-US", { month: "short", year: "2-digit" }).replace(" ", "").toUpperCase();
     const nameOrCompany = jobType === "Commercial" && companyName.trim() ? companyName.trim() : lastName;
     return [nameOrCompany, streetNum, city, state, monYY].filter(Boolean).join(" ");
@@ -1366,6 +1367,7 @@ export default function PricingCalculator() {
           dealId: zohoResult.dealId,
           opportunityNumber: zohoResult.opportunityNumber,
           contactId: zohoResult.contactId,
+          accountId: zohoResult.accountId,
           customer: proposalData.customer,
           address: proposalData.address,
           cityStateZip: proposalData.cityStateZip,
@@ -1379,8 +1381,11 @@ export default function PricingCalculator() {
           companyPhone: proposalData.companyPhone,
           companyEmail: proposalData.companyEmail,
           userName: proposalData.userName,
+          contactPersonName: proposalData.contactPersonName,
           feeAmount: proposalData.feeAmount,
           feePct: proposalData.feePct,
+          minAdj: proposalData.minAdj,
+          totalCost: proposalData.totalCost,
           lines: proposalData.lines,
         }),
       });
@@ -2677,6 +2682,24 @@ export default function PricingCalculator() {
                         Estimate ID: {estimateRecordResult?.estimateId}
                       </div>
                     )}
+                    {estimateRecordResult?.linkWarning && (
+                      <div style={{
+                        marginTop: 8, padding: 8, background: "#fff8e6",
+                        border: "1px solid #f5d78e", borderRadius: 6,
+                        fontSize: 11, color: "#8a6d1a", lineHeight: 1.45,
+                      }}>
+                        {estimateRecordResult.linkWarning}
+                      </div>
+                    )}
+                    {estimateRecordResult?.warnings?.filter((w) => w !== estimateRecordResult.linkWarning).map((warning) => (
+                      <div key={warning} style={{
+                        marginTop: 8, padding: 8, background: "#fff8e6",
+                        border: "1px solid #f5d78e", borderRadius: 6,
+                        fontSize: 11, color: "#8a6d1a", lineHeight: 1.45,
+                      }}>
+                        {warning}
+                      </div>
+                    ))}
                   </div>
                 )}
                 {estimateRecordStatus === "not_configured" && (
