@@ -12,11 +12,11 @@ export interface ServerUser {
   glassRate: number | null;
   filmRate: number | null; // flat commission rate on film sale total
   passwordHash: string; // sha256 of the plaintext password
-  // Stored CRM user id. Used for Deal.Owner when zohoEmail is not set.
+  // Stored CRM user id. Deal.Owner when there is no email lookup, and the
+  // fallback when a lookup cannot run. ZOHO_CRM_USER_ID_<LOGIN> overrides it.
   zohoUserId?: string;
-  // When set, Deal.Owner is the CRM user with this email (live lookup, or
-  // ZOHO_CRM_USER_ID_<LOGIN> if the lookup cannot run). A stored id is not
-  // used as a fallback, so we never assign a guessed owner.
+  // When set, Deal.Owner is resolved from this CRM mailbox first. A stored
+  // zohoUserId is used if that lookup fails.
   zohoEmail?: string;
 }
 
@@ -32,10 +32,11 @@ export const SERVER_USERS: ServerUser[] = [
   { id: "dana",  name: "Dana",  loc: "Colorado",  glassRate: 0,    filmRate: 0.07, passwordHash: hash("0000"), zohoUserId: "6168763000003575014" },
   { id: "amy",   name: "Amy",   loc: "Texas",     glassRate: 0,    filmRate: 0.05, passwordHash: hash("0000"), zohoUserId: "6168763000003573001" },
   { id: "blake", name: "Blake", loc: "KS/MO",     glassRate: null, filmRate: 0.15, passwordHash: hash("0000"), zohoUserId: "6168763000003575012" },
-  // PIN 0000, same placeholder as the other reps. Owner is NOT a stored id:
-  // quotes she sends are owned by the CRM user katie@scottishwindowtinting.com,
-  // resolved at send time (see zohoOwners.ts and ZOHO-SETUP.md).
-  { id: "katie", name: "Katie", loc: "Arizona",   glassRate: null, filmRate: 0,    passwordHash: hash("0000"), zohoEmail: "katie@scottishwindowtinting.com" },
+  // PIN 0000. zohoUserId confirmed from Zoho CRM Setup → Users → Katie
+  // (org 848141664, the id in the user URL). It is the owner when the
+  // katie@scottishwindowtinting.com lookup cannot run. ZOHO_CRM_USER_ID_KATIE
+  // still overrides it.
+  { id: "katie", name: "Katie", loc: "Arizona",   glassRate: null, filmRate: 0,    passwordHash: hash("0000"), zohoEmail: "katie@scottishwindowtinting.com", zohoUserId: "6168763000002178001" },
   { id: "mike",  name: "Mike",  loc: "Tennessee", glassRate: null, filmRate: 0,    passwordHash: hash("0000"), zohoUserId: "6168763000003583005" },
   { id: "jenny", name: "Jenny", loc: "Colorado",  glassRate: null, filmRate: 0.05, passwordHash: hash("1111"), zohoUserId: "6168763000038970001" },
   // Admin test account — used to check whether logging estimates/deals in
