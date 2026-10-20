@@ -166,6 +166,7 @@ Use your email provider's SMTP settings. Common ones:
 | `ZohoCRM.modules.contacts.READ` | Search for existing contacts |
 | `ZohoCRM.modules.deals.CREATE` | Create deals/opportunities |
 | `ZohoCRM.modules.notes.CREATE` | Add notes to deals |
+| `ZohoCRM.users.READ` | Look up a CRM user id by email (deal owner) |
 | `ZohoSheet.workbooks.ALL` | Read/write Zoho Sheet data |
 
 ---
@@ -182,6 +183,47 @@ If your Zoho account is NOT in the US, change `ZOHO_DATACENTER`:
 | Australia | `com.au` | accounts.zoho.com.au |
 
 ---
+
+## Estimate line items (unit and discount column)
+
+Each Books line is sent with `unit` set to an empty string. The film items in the catalog use the unit `sf`, and Books copies that onto the line when the request leaves unit out, which is why quantity showed as `1 sf`.
+
+The create call does not send `discount`, `discount_type`, `is_discount_before_tax`, or a per-line discount. A calculator discount is already included in the line rates, so the estimate total still matches.
+
+If a Discount column is still on the estimate after this change, it is not coming from the payload. Zoho Books draws that column when either of these is on:
+
+1. Settings → Preferences → General → **Do you give discounts?** is **At Line Item Level**.
+2. The estimate PDF template in use has the Discount column enabled (Settings → PDF Templates → Estimates → Item Table).
+
+There is no field on a single estimate that hides the column. Turn the preference to **I don't give discounts** (or **At Transaction Level** if a single discount total is still wanted) and uncheck Discount on the template.
+
+## Deal owner and estimate salesperson
+
+Each quote's Opportunity owner is the rep who is logged in. Dana, Amy, Blake, Mike, Jenny, and Admin keep the CRM user ids already stored with their logins. Those ids are not changed by this lookup.
+
+Katie logs in with PIN `0000`. She does not have a stored CRM user id. When she sends a quote, the app looks up the active CRM user whose email is `katie@scottishwindowtinting.com` and sets that user as `Deal.Owner`. The same email is used to find her Zoho Books salesperson, and that salesperson id is set on the estimate. If Books has no salesperson with that email, the estimate is still created and labeled with the name Katie, and the calculator shows a warning.
+
+The lookup calls `GET /crm/v2/users` (search by email, then the active-user list). That needs the `ZohoCRM.users.READ` scope on the refresh token, in addition to the CRM and Books scopes already in use. Books salesperson lookup uses the existing `ZohoBooks.fullaccess.all` scope (`GET /books/v3/salespersons`).
+
+If the users API cannot be called, set Katie's CRM user id explicitly. In Zoho CRM open Setup → Users → Katie and copy the id from the user URL. Do not guess an id. Add it in Vercel (and in `web/.env.local` for local runs), then redeploy:
+
+```
+ZOHO_CRM_USER_ID_KATIE=
+```
+
+Optional, only when the Books salesperson email lookup does not find her:
+
+```
+ZOHO_BOOKS_SALESPERSON_ID_KATIE=
+```
+
+The same pattern works for any login id: `ZOHO_CRM_USER_ID_<LOGIN>` (for example `ZOHO_CRM_USER_ID_JENNY`) overrides that person's stored id. A JSON map is also accepted:
+
+```
+ZOHO_CRM_USER_IDS={"katie":"<crm user id>"}
+```
+
+A per-user variable wins over the JSON map, and either one wins over the email lookup.
 
 ## Connecting to Production Zoho — "Fill Out Estimate" Feature
 
@@ -243,7 +285,7 @@ the CRM scopes already in use) and copying `organization_id` for
 ### OAuth scope needed (Self-Client, same process as before)
 
 ```
-ZohoCRM.modules.contacts.ALL,ZohoCRM.modules.deals.ALL,ZohoCRM.modules.notes.ALL,ZohoCRM.settings.ALL,ZohoCRM.modules.ALL,ZohoBooks.fullaccess.all
+ZohoCRM.modules.contacts.ALL,ZohoCRM.modules.deals.ALL,ZohoCRM.modules.notes.ALL,ZohoCRM.settings.ALL,ZohoCRM.modules.ALL,ZohoCRM.users.READ,ZohoBooks.fullaccess.all
 ```
 
 (The old `ZohoCRM.modules.quotes.ALL` / `ZohoCRM.modules.attachments.ALL`

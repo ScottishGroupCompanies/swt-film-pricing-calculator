@@ -20,6 +20,8 @@ import {
   toBooksAddress,
 } from "./address";
 import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustomerLink";
+import { booksLineItemBody } from "./booksEstimatePayload";
+import { matchUserIdByEmail } from "./zohoOwners";
 
 export {
   formatCityStateZip,
@@ -155,6 +157,60 @@ export async function crmApiCall(
   }
 
   return data;
+}
+
+interface CrmUserRow {
+  id?: string;
+  email?: string;
+}
+
+const crmUserIdByEmail = new Map<string, { id: string; expiresAt: number }>();
+const CRM_USER_CACHE_MS = 10 * 60 * 1000;
+
+/**
+ * Find an active Zoho CRM user's id by mailbox. Used so a calculator login
+ * (Katie) can own the Opportunity without a hardcoded id. Requires the
+ * ZohoCRM.users.READ scope. Results are cached briefly per server instance.
+ */
+export async function findCrmUserIdByEmail(email: string): Promise<string | null> {
+  const want = email.trim().toLowerCase();
+  if (!want) return null;
+  const cached = crmUserIdByEmail.get(want);
+  if (cached && cached.expiresAt > Date.now()) return cached.id;
+
+  const fromSearch = await searchCrmUsersByEmail(want);
+  const id = fromSearch ?? await listCrmUserIdByEmail(want);
+  if (id) crmUserIdByEmail.set(want, { id, expiresAt: Date.now() + CRM_USER_CACHE_MS });
+  return id;
+}
+
+async function searchCrmUsersByEmail(email: string): Promise<string | null> {
+  try {
+    const result = await crmApiCall(
+      "GET",
+      `/users/search?criteria=${encodeURIComponent(`(email:equals:${email})`)}`,
+    ) as { users?: CrmUserRow[] };
+    return matchUserIdByEmail(result?.users || [], email);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    // Auth/scope failures should surface. A search that this org doesn't
+    // support falls through to the active-user list.
+    if (/\(401\)|\(403\)/.test(message)) throw e;
+    return null;
+  }
+}
+
+async function listCrmUserIdByEmail(email: string): Promise<string | null> {
+  for (let page = 1; page <= 5; page++) {
+    const result = await crmApiCall(
+      "GET",
+      `/users?type=ActiveUsers&per_page=200&page=${page}`,
+    ) as { users?: CrmUserRow[]; info?: { more_records?: boolean } };
+    const id = matchUserIdByEmail(result?.users || [], email);
+    if (id) return id;
+    if (!result?.info?.more_records) break;
+  }
+  return null;
 }
 
 /**
@@ -700,6 +756,32 @@ export async function booksApiCall(
   return data;
 }
 
+/**
+ * Look up a Zoho Books salesperson by email so an estimate can be assigned
+ * to that person (salesperson_id), not only labeled with a display name.
+ */
+export async function findBooksSalespersonByEmail(
+  orgId: string,
+  email: string,
+): Promise<{ id: string; name: string } | null> {
+  const result = await booksApiCall("GET", "/salespersons", orgId) as {
+    salespersons?: {
+      salesperson_id?: string;
+      salesperson_name?: string;
+      salesperson_email?: string;
+      is_active?: boolean;
+    }[];
+  };
+  const want = email.trim().toLowerCase();
+  const match = (result?.salespersons || []).find((person) =>
+    person.is_active !== false
+    && (person.salesperson_email || "").trim().toLowerCase() === want
+    && person.salesperson_id
+  );
+  if (!match?.salesperson_id) return null;
+  return { id: String(match.salesperson_id), name: match.salesperson_name || "" };
+}
+
 export interface BooksCustomerRecord extends LinkedBooksCustomer {
   name: string;
   contactPersonCount: number;
@@ -1025,10 +1107,10 @@ export async function createBooksEstimate(orgId: string, input: {
   opportunityNumber: string; // e.g. "WT-03296" — used to derive estimate_number
   estimateDate: string; // YYYY-MM-DD
   salespersonName?: string;
+  /** Books salesperson record id (not the CRM user id). */
+  salespersonId?: string;
   paymentTerms?: string;
   termsAndConditions?: string;
-  /** Flat entity-level discount. Line rates stay non-negative. */
-  discountAmount?: number;
   lineItems: BooksEstimateLineItem[];
   // Job-site installation address — populates the Books estimate template's
   // "Installation Address" custom field (api_name: cf_installation_address).
@@ -1046,21 +1128,13 @@ export async function createBooksEstimate(orgId: string, input: {
     zcrm_potential_id: input.dealId,
     estimate_number: estimateNumber,
     date: input.estimateDate,
-    line_items: input.lineItems.map((li) => ({
-      item_id: li.itemId,
-      name: li.name,
-      description: li.description,
-      rate: li.rate,
-      quantity: li.quantity,
-    })),
+    // No discount, discount_type, or is_discount_before_tax. Those fields
+    // are what turn on the Discount column. Reductions are already in the rates.
+    line_items: input.lineItems.map((li) => booksLineItemBody(li)),
   };
+  if (input.salespersonId) payload.salesperson_id = input.salespersonId;
   if (input.salespersonName) payload.salesperson_name = input.salespersonName;
   if (input.termsAndConditions) payload.terms = input.termsAndConditions;
-  if (input.discountAmount && input.discountAmount > 0) {
-    payload.discount = input.discountAmount;
-    payload.discount_type = "entity_level";
-    payload.is_discount_before_tax = true;
-  }
 
   const installationAddressLines = formatInstallationAddress({
     street: input.installationStreet,

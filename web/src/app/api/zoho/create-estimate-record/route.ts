@@ -37,9 +37,12 @@ import { resolveBooksCustomerLink } from "@/lib/booksCustomerLink";
 import {
   getBooksConfig, getRecord, getBooksCustomer, searchBooksItem, createBooksEstimate,
   findSyncedCrmEstimateRecord, booksCustomerLinkClient, updateBooksCustomerAddress,
-  ensureBooksContactPerson,
+  ensureBooksContactPerson, findBooksSalespersonByEmail,
   type BooksEstimateLineItem,
 } from "@/lib/zoho";
+import { getSessionUserId } from "@/lib/sessionCookies";
+import { findUserById } from "@/lib/auth";
+import { booksSalespersonIdEnvKey, readEnvUserOverride } from "@/lib/zohoOwners";
 
 interface EstimateLine {
   desc: string;
@@ -291,13 +294,44 @@ export async function POST(request: NextRequest) {
     // on the Deal in submit-pricing/route.ts) — populates Books' own
     // "Installation Address" custom field so it's never blank/"null null
     // null" on the generated estimate.
+    // Salesperson follows the logged-in user. Katie is matched to the Books
+    // salesperson with her CRM email (or ZOHO_BOOKS_SALESPERSON_ID_KATIE).
+    // Other reps keep the previous behavior: the estimate is labeled with
+    // their display name.
+    const sessionUserId = await getSessionUserId();
+    const sessionUser = sessionUserId ? findUserById(sessionUserId) : null;
+    let salespersonName = sessionUser?.name || body.userName;
+    let salespersonId: string | undefined;
+    if (sessionUser) {
+      const envSalespersonId = readEnvUserOverride(sessionUser.id, process.env, "ZOHO_BOOKS_SALESPERSON_ID");
+      if (envSalespersonId) {
+        salespersonId = envSalespersonId;
+      } else if (sessionUser.zohoEmail) {
+        try {
+          const salesperson = await findBooksSalespersonByEmail(orgId, sessionUser.zohoEmail);
+          if (salesperson) {
+            salespersonId = salesperson.id;
+            if (salesperson.name) salespersonName = salesperson.name;
+          } else {
+            warnings.push(
+              `No Zoho Books salesperson matches ${sessionUser.zohoEmail}. The estimate uses the name "${salespersonName}". Add that email as a Books salesperson, or set ${booksSalespersonIdEnvKey(sessionUser.id)} to her salesperson id.`,
+            );
+          }
+        } catch (e) {
+          warnings.push(
+            `Could not look up the Zoho Books salesperson for ${sessionUser.zohoEmail} (${e instanceof Error ? e.message : String(e)}). The estimate uses the name "${salespersonName}". Set ${booksSalespersonIdEnvKey(sessionUser.id)} to assign her salesperson record.`,
+          );
+        }
+      }
+    }
+
     const result = await createBooksEstimate(orgId, {
       customerId,
       dealId: body.dealId,
       opportunityNumber: body.opportunityNumber,
       estimateDate: parseDateForBooks(body.date),
-      salespersonName: body.userName,
-      discountAmount: planned.discount,
+      salespersonName,
+      salespersonId,
       lineItems,
       installationStreet: body.address,
       installationCity: installParsed.city,
