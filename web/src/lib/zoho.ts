@@ -15,80 +15,19 @@
  * - ZOHO_ACCOUNTS_URL  — e.g. https://accounts.zoho.com/oauth/v2/token
  */
 
-// Full state name -> USPS 2-letter abbreviation, so a rep typing "Denver,
-// Colorado 80202" or "Denver Colorado" doesn't silently fail to parse.
-const STATE_NAME_TO_ABBR: Record<string, string> = {
-  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA",
-  colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA",
-  hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA",
-  kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
-  massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS",
-  missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV",
-  "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM",
-  "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH",
-  oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI",
-  "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX",
-  utah: "UT", vermont: "VT", virginia: "VA", washington: "WA",
-  "west virginia": "WV", wisconsin: "WI", wyoming: "WY",
-  "district of columbia": "DC",
-};
+import {
+  formatInstallationAddress,
+  toBooksAddress,
+} from "./address";
+import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustomerLink";
 
-/**
- * Parses a free-typed "City, State ZIP" string into its parts for Zoho's
- * separate City/State/Zip fields. Tolerant of the messy real-world variants
- * reps actually type — missing comma, full state name instead of the 2-letter
- * abbreviation, extra whitespace — because a strict parser silently returning
- * all-empty strings on any of those is exactly what caused "null null null"
- * to get sent to Zoho as a literal address. Returns whatever it CAN parse
- * rather than all-or-nothing.
- */
-export function parseCityStateZip(csz?: string): { city: string; state: string; zip: string } {
-  if (!csz) return { city: "", state: "", zip: "" };
-  const trimmed = csz.trim().replace(/\s+/g, " ");
-  if (!trimmed) return { city: "", state: "", zip: "" };
-
-  // Pull the ZIP off the end first (5 digits, optionally +4), if present.
-  const zipMatch = trimmed.match(/(\d{5}(?:-\d{4})?)\s*$/);
-  const zip = zipMatch ? zipMatch[1] : "";
-  const withoutZip = (zipMatch ? trimmed.slice(0, zipMatch.index) : trimmed).replace(/,\s*$/, "").trim();
-
-  if (!withoutZip) return { city: "", state: "", zip };
-
-  // Split on a comma if present ("City, State"); otherwise fall back to
-  // splitting on the last whitespace-separated token(s) that match a known
-  // state name/abbreviation.
-  let cityPart = withoutZip;
-  let statePart = "";
-  const commaIdx = withoutZip.lastIndexOf(",");
-  if (commaIdx !== -1) {
-    cityPart = withoutZip.slice(0, commaIdx).trim();
-    statePart = withoutZip.slice(commaIdx + 1).trim();
-  } else {
-    // No comma — try matching a known full state name (possibly multi-word,
-    // e.g. "New York") at the end, then a bare 2-letter abbreviation.
-    const lower = withoutZip.toLowerCase();
-    let matchedName: string | null = null;
-    for (const name of Object.keys(STATE_NAME_TO_ABBR)) {
-      if (lower.endsWith(name) && (lower.length === name.length || lower[lower.length - name.length - 1] === " ")) {
-        if (!matchedName || name.length > matchedName.length) matchedName = name;
-      }
-    }
-    if (matchedName) {
-      cityPart = withoutZip.slice(0, withoutZip.length - matchedName.length).trim();
-      statePart = matchedName;
-    } else {
-      const abbrevMatch = withoutZip.match(/^(.+?)\s+([A-Za-z]{2})$/);
-      if (abbrevMatch) {
-        cityPart = abbrevMatch[1].trim();
-        statePart = abbrevMatch[2];
-      }
-    }
-  }
-
-  const stateAbbr = STATE_NAME_TO_ABBR[statePart.toLowerCase()] || (statePart.length === 2 ? statePart.toUpperCase() : "");
-
-  return { city: cityPart, state: stateAbbr, zip };
-}
+export {
+  formatCityStateZip,
+  formatInstallationAddress,
+  parseCityStateZip,
+  sanitizeAddressPart,
+  toBooksAddress,
+} from "./address";
 
 
 export interface ZohoConfig {
@@ -761,62 +700,256 @@ export async function booksApiCall(
   return data;
 }
 
-/**
- * Search Zoho Books customers by name (fuzzy). Books contacts sync from
- * CRM automatically — a customer usually already exists for any CRM
- * Contact/Account created via the calculator's "Send to Zoho
- * Opportunities" step, but sync timing can vary.
- */
-export async function searchBooksCustomer(orgId: string, name: string): Promise<{ id: string; name: string } | null> {
-  // IMPORTANT: Zoho's /contacts endpoint silently drops search_text when
-  // contact_type is also present in the same query (confirmed via direct
-  // API testing — combining both params returns ALL contacts of that type,
-  // ignoring the name filter entirely). So we search by name only, then
-  // filter the results to contact_type=customer client-side. Without this
-  // filter, a vendor contact (e.g. a supplier/manufacturer) sharing the
-  // customer's name could get matched, and Zoho then rejects the Estimate
-  // creation with "Make sure that you have selected a contact of the
-  // correct contact type (customer/vendor)" (error code 3045) — a real
-  // production bug this filter fixes.
-  const result = await booksApiCall("GET", `/contacts?search_text=${encodeURIComponent(name)}`, orgId) as {
-    contacts?: { contact_id: string; contact_name: string; contact_type?: string }[];
+export interface BooksCustomerRecord extends LinkedBooksCustomer {
+  name: string;
+  contactPersonCount: number;
+  billingState: string | null;
+  billingZip: string | null;
+}
+
+function asBooksCustomer(contact: {
+  contact_id?: string | number;
+  contact_name?: string;
+  contact_type?: string;
+  zcrm_account_id?: string | number | null;
+  zcrm_contact_id?: string | number | null;
+  contact_persons?: unknown[];
+  billing_address?: { state?: string | null; state_code?: string | null; zip?: string | number | null };
+} | null | undefined): BooksCustomerRecord | null {
+  if (!contact?.contact_id) return null;
+  if (contact.contact_type && contact.contact_type !== "customer") return null;
+  const billingState = contact.billing_address?.state_code || contact.billing_address?.state || "";
+  const billingZip = contact.billing_address?.zip != null ? String(contact.billing_address.zip) : "";
+  return {
+    id: String(contact.contact_id),
+    name: contact.contact_name || "",
+    zcrmAccountId: contact.zcrm_account_id ? String(contact.zcrm_account_id) : null,
+    zcrmContactId: contact.zcrm_contact_id ? String(contact.zcrm_contact_id) : null,
+    contactPersonCount: Array.isArray(contact.contact_persons) ? contact.contact_persons.length : 0,
+    billingState: billingState.trim() && !/^null$/i.test(billingState.trim()) ? billingState.trim() : null,
+    billingZip: billingZip.trim() && !/^null$/i.test(billingZip.trim()) ? billingZip.trim() : null,
   };
-  const customers = (result?.contacts ?? []).filter((c) => c.contact_type === "customer" || !c.contact_type);
-  const match = customers.find((c) => c.contact_name.toLowerCase() === name.toLowerCase())
-    || customers[0];
-  return match ? { id: match.contact_id, name: match.contact_name } : null;
 }
 
 /**
- * Create a Zoho Books customer (used when no matching contact is found
- * for a rep's job — e.g. sync from CRM hasn't happened yet).
+ * Search Zoho Books customers by name. Exact name match only — a fuzzy
+ * first-result fallback used to attach estimates to the wrong customer
+ * (and to an unlinked one, for brand-new names).
+ *
+ * IMPORTANT: Zoho's /contacts endpoint silently drops search_text when
+ * contact_type is also present in the same query (confirmed via direct
+ * API testing). Search by name only, then filter to customers client-side.
  */
-export async function createBooksCustomer(orgId: string, input: {
+export async function searchBooksCustomer(orgId: string, name: string): Promise<{ id: string; name: string } | null> {
+  const found = await findBooksCustomerByName(orgId, name);
+  return found ? { id: found.id, name: found.name } : null;
+}
+
+export async function getBooksCustomer(orgId: string, customerId: string): Promise<BooksCustomerRecord | null> {
+  const result = await booksApiCall("GET", `/contacts/${encodeURIComponent(customerId)}`, orgId) as {
+    contact?: {
+      contact_id?: string | number;
+      contact_name?: string;
+      contact_type?: string;
+      zcrm_account_id?: string | number | null;
+      zcrm_contact_id?: string | number | null;
+      contact_persons?: unknown[];
+      billing_address?: { state?: string | null; state_code?: string | null; zip?: string | number | null };
+    };
+  };
+  return asBooksCustomer(result?.contact);
+}
+
+async function listBooksCustomers(orgId: string, query: string): Promise<BooksCustomerRecord[]> {
+  const result = await booksApiCall("GET", query, orgId) as {
+    contacts?: {
+      contact_id?: string | number;
+      contact_name?: string;
+      contact_type?: string;
+      zcrm_account_id?: string | number | null;
+      zcrm_contact_id?: string | number | null;
+    }[];
+  };
+  return (result?.contacts ?? []).map((c) => asBooksCustomer(c)).filter((c): c is BooksCustomerRecord => !!c);
+}
+
+/**
+ * Find the Books customer Zoho created by importing this CRM account.
+ * The list filter is not always honored, so a hit is only trusted when
+ * the row actually carries this zcrm_account_id (or the single returned
+ * row's full record does).
+ */
+export async function findBooksCustomerByCrmAccount(orgId: string, accountId: string): Promise<BooksCustomerRecord | null> {
+  const rows = await listBooksCustomers(orgId, `/contacts?zcrm_account_id=${encodeURIComponent(accountId)}&per_page=50`);
+  const tagged = rows.find((row) => row.zcrmAccountId === String(accountId));
+  if (tagged) return tagged;
+  if (rows.length === 1) {
+    const detail = await getBooksCustomer(orgId, rows[0].id);
+    if (detail?.zcrmAccountId === String(accountId)) return detail;
+  }
+  return null;
+}
+
+export async function findBooksCustomerByCrmContact(orgId: string, contactId: string): Promise<BooksCustomerRecord | null> {
+  const rows = await listBooksCustomers(orgId, `/contacts?zcrm_contact_id=${encodeURIComponent(contactId)}&per_page=50`);
+  const tagged = rows.find((row) => row.zcrmContactId === String(contactId));
+  if (tagged) return tagged;
+  if (rows.length === 1) {
+    const detail = await getBooksCustomer(orgId, rows[0].id);
+    if (detail?.zcrmContactId === String(contactId)) return detail;
+  }
+  return null;
+}
+
+export async function findBooksCustomerByName(orgId: string, name: string): Promise<BooksCustomerRecord | null> {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return null;
+  const rows = await listBooksCustomers(orgId, `/contacts?search_text=${encodeURIComponent(name.trim())}`);
+  const exact = rows.find((row) => row.name.trim().toLowerCase() === wanted);
+  if (!exact) return null;
+  return (await getBooksCustomer(orgId, exact.id)) || exact;
+}
+
+function readImportContactId(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  const code = record.code;
+  if (typeof code === "number" && code !== 0) {
+    throw new Error(`Zoho Books CRM import failed: ${JSON.stringify(record)}`);
+  }
+  const nested = record.data && typeof record.data === "object" ? record.data as Record<string, unknown> : undefined;
+  const contact = record.contact && typeof record.contact === "object" ? record.contact as Record<string, unknown> : undefined;
+  const raw = nested?.contact_id ?? nested?.customer_id ?? contact?.contact_id ?? record.contact_id;
+  if (raw == null || raw === "") return null;
+  return String(raw);
+}
+
+/**
+ * Import a CRM account as a Books customer. This is the call that sets
+ * zcrm_account_id, which is what makes later estimates show on the
+ * Opportunity. Safe to call for an account that was already imported —
+ * callers treat a failure as "look up the existing customer".
+ */
+export async function importBooksCustomerFromCrmAccount(orgId: string, crmAccountId: string): Promise<string> {
+  const result = await booksApiCall("POST", `/crm/account/${encodeURIComponent(crmAccountId)}/import`, orgId);
+  const id = readImportContactId(result);
+  if (!id) throw new Error("Zoho Books did not return a customer id when importing the CRM account.");
+  return id;
+}
+
+/** Import a CRM contact. Only succeeds for Contacts-only Books sync. */
+export async function importBooksCustomerFromCrmContact(orgId: string, crmContactId: string): Promise<string> {
+  const result = await booksApiCall("POST", `/crm/contact/${encodeURIComponent(crmContactId)}/import`, orgId);
+  const id = readImportContactId(result);
+  if (!id) throw new Error("Zoho Books did not return a customer id when importing the CRM contact.");
+  return id;
+}
+
+export function splitPersonName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: "", lastName: "Customer" };
+  if (parts.length === 1) return { firstName: "", lastName: parts[0] };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+export interface BooksCustomerWrite {
   contactName: string;
   companyName?: string;
+  contactPersonName?: string;
   email?: string;
   phone?: string;
   billingAddress?: { address?: string; city?: string; state?: string; zip?: string };
-}): Promise<string> {
+  shippingAddress?: { address?: string; city?: string; state?: string; zip?: string };
+}
+
+/**
+ * Create a Zoho Books customer. This does NOT link the customer to CRM —
+ * prefer importBooksCustomerFromCrmAccount. Used only when import fails,
+ * and the estimate response warns that the Finance related list may not
+ * show the estimate.
+ */
+export async function createBooksCustomer(orgId: string, input: BooksCustomerWrite): Promise<string> {
   const payload: Record<string, unknown> = {
     contact_name: input.companyName || input.contactName,
+    contact_type: "customer",
   };
   if (input.companyName) payload.company_name = input.companyName;
   if (input.email) payload.email = input.email;
   if (input.phone) payload.phone = input.phone;
-  if (input.billingAddress) {
-    payload.billing_address = {
-      address: input.billingAddress.address || "",
-      city: input.billingAddress.city || "",
-      state: input.billingAddress.state || "",
-      zip: input.billingAddress.zip || "",
+  const billing = input.billingAddress ? toBooksAddress(input.billingAddress) : undefined;
+  const shipping = input.shippingAddress ? toBooksAddress(input.shippingAddress) : undefined;
+  if (billing) payload.billing_address = billing;
+  if (shipping) payload.shipping_address = shipping;
+
+  // A company customer uses the contact person; a residential customer
+  // is the person. Skip when we only have a business name.
+  const personName = input.contactPersonName || (input.companyName ? "" : input.contactName);
+  if (personName.trim()) {
+    const person = splitPersonName(personName);
+    const contactPerson: Record<string, unknown> = {
+      last_name: person.lastName,
+      is_primary_contact: true,
     };
+    if (person.firstName) contactPerson.first_name = person.firstName;
+    if (input.email) contactPerson.email = input.email;
+    if (input.phone) contactPerson.phone = input.phone;
+    payload.contact_persons = [contactPerson];
   }
 
   const result = await booksApiCall("POST", "/contacts", orgId, payload) as { contact?: { contact_id?: string } };
   const id = result?.contact?.contact_id;
   if (!id) throw new Error("Failed to create Books customer: no ID returned");
   return id;
+}
+
+/** Write billing/shipping after a CRM import, which copies the CRM address as-is. */
+export async function updateBooksCustomerAddress(orgId: string, customerId: string, input: {
+  billingAddress?: BooksCustomerWrite["billingAddress"];
+  shippingAddress?: BooksCustomerWrite["shippingAddress"];
+}): Promise<void> {
+  const payload: Record<string, unknown> = {};
+  const billing = input.billingAddress ? toBooksAddress(input.billingAddress) : undefined;
+  const shipping = input.shippingAddress ? toBooksAddress(input.shippingAddress) : undefined;
+  if (billing) payload.billing_address = billing;
+  if (shipping) payload.shipping_address = shipping;
+  if (!Object.keys(payload).length) return;
+  await booksApiCall("PUT", `/contacts/${encodeURIComponent(customerId)}`, orgId, payload);
+}
+
+/**
+ * CRM import usually brings contact persons along. If it didn't (the
+ * contact was created seconds earlier), add the person so the Books
+ * customer isn't a bare company with nobody on it.
+ */
+export async function ensureBooksContactPerson(orgId: string, customerId: string, person: {
+  name: string;
+  email?: string;
+  phone?: string;
+}): Promise<void> {
+  const detail = await getBooksCustomer(orgId, customerId);
+  if (detail && detail.contactPersonCount > 0) return;
+  const split = splitPersonName(person.name);
+  if (!split.lastName) return;
+  const payload: Record<string, unknown> = {
+    contact_id: customerId,
+    last_name: split.lastName,
+    is_primary_contact: true,
+  };
+  if (split.firstName) payload.first_name = split.firstName;
+  if (person.email) payload.email = person.email;
+  if (person.phone) payload.phone = person.phone;
+  await booksApiCall("POST", "/contacts/contactpersons", orgId, payload);
+}
+
+export function booksCustomerLinkClient(orgId: string, fallback: BooksCustomerWrite): BooksCustomerLinkClient {
+  return {
+    importAccount: (accountId) => importBooksCustomerFromCrmAccount(orgId, accountId),
+    importContact: (contactId) => importBooksCustomerFromCrmContact(orgId, contactId),
+    findByAccountId: (accountId) => findBooksCustomerByCrmAccount(orgId, accountId),
+    findByContactId: (contactId) => findBooksCustomerByCrmContact(orgId, contactId),
+    findByName: (name) => findBooksCustomerByName(orgId, name),
+    createUnlinked: () => createBooksCustomer(orgId, fallback),
+  };
 }
 
 /**
@@ -894,6 +1027,8 @@ export async function createBooksEstimate(orgId: string, input: {
   salespersonName?: string;
   paymentTerms?: string;
   termsAndConditions?: string;
+  /** Flat entity-level discount. Line rates stay non-negative. */
+  discountAmount?: number;
   lineItems: BooksEstimateLineItem[];
   // Job-site installation address — populates the Books estimate template's
   // "Installation Address" custom field (api_name: cf_installation_address).
@@ -921,11 +1056,18 @@ export async function createBooksEstimate(orgId: string, input: {
   };
   if (input.salespersonName) payload.salesperson_name = input.salespersonName;
   if (input.termsAndConditions) payload.terms = input.termsAndConditions;
+  if (input.discountAmount && input.discountAmount > 0) {
+    payload.discount = input.discountAmount;
+    payload.discount_type = "entity_level";
+    payload.is_discount_before_tax = true;
+  }
 
-  const installationAddressLines = [
-    input.installationStreet,
-    [input.installationCity, input.installationState, input.installationZip].filter(Boolean).join(" "),
-  ].filter((line) => line && line.trim()).join("\n");
+  const installationAddressLines = formatInstallationAddress({
+    street: input.installationStreet,
+    city: input.installationCity,
+    state: input.installationState,
+    zip: input.installationZip,
+  });
   if (installationAddressLines) {
     payload.custom_fields = [
       { api_name: "cf_installation_address", value: installationAddressLines },

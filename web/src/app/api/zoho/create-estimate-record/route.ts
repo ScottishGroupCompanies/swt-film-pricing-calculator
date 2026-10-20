@@ -10,8 +10,10 @@
  *
  * Requires the Deal to already exist (rep must have clicked "Send to
  * Zoho Opportunities" first) so we have a real Opportunity to link
- * against, and a Books customer that corresponds to the CRM Contact/
- * Account (synced automatically by Zoho, or created here as a fallback).
+ * against, and a Books customer imported from that Deal's CRM account
+ * (POST /crm/account/{id}/import). A name lookup that misses and then
+ * POST /contacts creates an unlinked customer, which is why estimates
+ * for brand-new customers never showed under Zoho Finance > Estimates.
  *
  * Every Books estimate line item must reference a real Item record —
  * this endpoint maps each line's film category to one of the existing
@@ -29,10 +31,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { parseCityStateZip } from "@/lib/address";
+import { planEstimateLines } from "@/lib/estimateLines";
+import { resolveBooksCustomerLink } from "@/lib/booksCustomerLink";
 import {
-  getBooksConfig, searchBooksCustomer, createBooksCustomer,
-  searchBooksItem, createBooksEstimate, findSyncedCrmEstimateRecord,
-  parseCityStateZip,
+  getBooksConfig, getRecord, getBooksCustomer, searchBooksItem, createBooksEstimate,
+  findSyncedCrmEstimateRecord, booksCustomerLinkClient, updateBooksCustomerAddress,
+  ensureBooksContactPerson,
   type BooksEstimateLineItem,
 } from "@/lib/zoho";
 
@@ -49,6 +54,7 @@ interface CreateEstimateRequest {
   dealId: string;
   opportunityNumber?: string | null; // Zoho's native Opportunity Number (e.g. "WT-03296") — required to derive estimate_number
   contactId?: string | null;
+  accountId?: string | null;
   customer: string;
   address?: string;
   cityStateZip?: string;
@@ -62,22 +68,14 @@ interface CreateEstimateRequest {
   companyPhone?: string;
   companyEmail?: string;
   userName?: string;
+  contactPersonName?: string;
   feeAmount?: number;
   feePct?: number;
+  /** Film total after the $250 minimum, before the fee. */
+  minAdj?: number;
+  /** Calculator total (minimum, discount, other, plus fee) — the deal amount. */
+  totalCost?: number;
   lines: EstimateLine[];
-}
-
-// Maps a film name/brand to one of the real Zoho Books catalog item names.
-// Falls back to "Other Film" for anything unrecognized — safe default,
-// never blocks estimate creation.
-function mapFilmToBooksItemName(film: string): string {
-  const f = (film || "").toLowerCase();
-  if (f.includes("frost") || f.includes("privacy") || f.includes("mist") || f.includes("glacier")) return "Frost/Privacy Film";
-  if (f.includes("safety") || f.includes("security") || f.includes("s2400") || f.includes("prestige")) return "Security Film";
-  if (f.includes("solar") || f.includes("reflect") || f.includes("neutral") || f.includes("ceramic")) return "Solar Film";
-  if (f.includes("graffiti") || f.includes("anti graffiti")) return "Graffiti";
-  if (f.includes("bird")) return "Bird Film";
-  return "Other Film";
 }
 
 function parseDateForBooks(displayDate: string): string {
@@ -88,10 +86,17 @@ function parseDateForBooks(displayDate: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Address parsing lives in @/lib/zoho now (parseCityStateZip) — shared with
-// submit-pricing/route.ts so both use the same tolerant parser (handles
-// missing commas, full state names, etc. instead of silently returning
-// blank fields that render as "null null null" on the Books estimate).
+// Address parsing lives in @/lib/address (parseCityStateZip) — shared with
+// submit-pricing so both accept "centennial co 80112" and never send the
+// literal word "null" to Books.
+
+function lookupId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const id = (value as { id?: unknown }).id;
+  if (typeof id === "string" && id.trim()) return id.trim();
+  if (typeof id === "number" && Number.isFinite(id)) return String(id);
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -134,63 +139,143 @@ export async function POST(request: NextRequest) {
       ? body.companyName
       : body.customer;
 
-    // ── 1. Resolve the Books customer (sync from CRM usually already
-    //       created one; create a fallback if not found yet) ──────────
-    let customerId: string;
-    const existingCustomer = await searchBooksCustomer(orgId, accountOrCustomerName);
-    if (existingCustomer) {
-      customerId = existingCustomer.id;
-    } else {
-      // Commercial: bill to the business's own address/phone/email.
-      // Residential: bill to the customer's job-site info.
-      const billingCsz = isCommercial ? body.companyCityStateZip : body.cityStateZip;
-      const { city, state, zip } = parseCityStateZip(billingCsz);
-      customerId = await createBooksCustomer(orgId, {
+    // The Deal is the source of truth for which CRM account this estimate
+    // has to be billed to. The ids submit-pricing returned are the fallback
+    // when the Deal read fails.
+    let accountId = body.accountId || null;
+    let contactId = body.contactId || null;
+    try {
+      const deal = await getRecord("Deals", body.dealId);
+      accountId = lookupId(deal?.Account_Name) || accountId;
+      contactId = lookupId(deal?.Contact_Name) || contactId;
+    } catch {
+      // Keep the client-supplied ids.
+    }
+
+    const billingCsz = isCommercial ? body.companyCityStateZip : body.cityStateZip;
+    const billingParsed = parseCityStateZip(billingCsz);
+    const installParsed = parseCityStateZip(body.cityStateZip);
+    const billingAddress = {
+      address: isCommercial ? body.companyAddress || body.address : body.address,
+      city: billingParsed.city,
+      state: billingParsed.state,
+      zip: billingParsed.zip,
+    };
+    const shippingAddress = {
+      address: body.address,
+      city: installParsed.city,
+      state: installParsed.state,
+      zip: installParsed.zip,
+    };
+    const personName = (isCommercial ? body.contactPersonName : "") || body.customer;
+    const personEmail = isCommercial ? body.companyEmail || body.email : body.email;
+    const personPhone = isCommercial ? body.companyPhone || body.phone : body.phone;
+
+    // ── 1. Import the CRM account (or contact) as the Books customer.
+    //       Creating one by name leaves zcrm_account_id empty, and the
+    //       estimate then never appears on the Opportunity. ──────────
+    const warnings: string[] = [];
+    const linked = await resolveBooksCustomerLink(
+      booksCustomerLinkClient(orgId, {
         contactName: body.customer,
         companyName: isCommercial ? body.companyName : undefined,
-        email: isCommercial ? body.companyEmail || body.email : body.email,
-        phone: isCommercial ? body.companyPhone || body.phone : body.phone,
-        billingAddress: {
-          address: isCommercial ? body.companyAddress || body.address : body.address,
-          city, state, zip,
-        },
-      });
+        contactPersonName: personName,
+        email: personEmail,
+        phone: personPhone,
+        billingAddress,
+        shippingAddress,
+      }),
+      { accountId, contactId, customerName: accountOrCustomerName }
+    );
+    const customerId = linked.customerId;
+    if (linked.warning) warnings.push(linked.warning);
+
+    // Import copies the CRM account address, which on a brand-new
+    // residential account is often just the city — Books then prints
+    // "Centennial null null". Fill state/ZIP only when they're blank so a
+    // repeat customer's existing billing address is left alone.
+    let booksCustomer: Awaited<ReturnType<typeof getBooksCustomer>> = null;
+    try {
+      booksCustomer = await getBooksCustomer(orgId, customerId);
+    } catch {
+      booksCustomer = null;
+    }
+    if (!booksCustomer?.billingState || !booksCustomer?.billingZip) {
+      try {
+        await updateBooksCustomerAddress(orgId, customerId, { billingAddress, shippingAddress });
+      } catch (e) {
+        warnings.push(
+          `Billing address could not be saved on the Zoho Books customer (${e instanceof Error ? e.message : String(e)}). City, state, and ZIP may be blank.`
+        );
+      }
+    }
+    if (personName?.trim()) {
+      try {
+        await ensureBooksContactPerson(orgId, customerId, {
+          name: personName,
+          email: personEmail,
+          phone: personPhone,
+        });
+      } catch {
+        // A missing contact person doesn't block the estimate. The CRM
+        // link above is what puts it on the Opportunity.
+      }
     }
 
-    // ── 2. Map each line item's film to a real Books Item, resolve rate ─
+    // ── 2. Map each planned line (film, minimum adjustment, fee) to a
+    //       real Books item. The minimum line uses the film item so it
+    //       stays on the same tax treatment as the windows. ───────────
+    const planned = planEstimateLines({
+      lines: body.lines,
+      minAdj: body.minAdj,
+      feeAmount: body.feeAmount,
+      feePct: body.feePct,
+      totalCost: body.totalCost,
+    });
     const lineItems: BooksEstimateLineItem[] = [];
     const unmatchedFilms: string[] = [];
+    let filmItem: { id: string; name: string } | null = null;
 
-    for (const line of body.lines) {
-      const itemName = mapFilmToBooksItemName(line.film);
-      const item = await searchBooksItem(orgId, itemName)
-        || await searchBooksItem(orgId, "Other Film");
-      if (!item) {
-        unmatchedFilms.push(line.film || "Unknown film");
-        continue;
-      }
-      const filmLabel = line.film && line.film !== "—" ? line.film : "Window Film";
-      lineItems.push({
-        itemId: item.id,
-        name: item.name,
-        description: `${line.desc || filmLabel} (qty ${line.qty})${line.film && line.film !== "—" ? ` · ${line.film}` : ""}`,
-        rate: line.qty ? line.lineTotal / line.qty : line.lineTotal,
-        quantity: line.qty || 1,
-      });
-    }
-
-    // ── 3. Add the fee line item, matching production's exact wording ──
-    if (body.feeAmount != null && body.feeAmount > 0) {
-      const feeItem = await searchBooksItem(orgId, "Fee (No Tax)") || await searchBooksItem(orgId, "Fee");
-      if (feeItem) {
+    for (const line of planned.lines) {
+      if (line.kind === "fee") {
+        const feeItem = await searchBooksItem(orgId, "Fee (No Tax)") || await searchBooksItem(orgId, "Fee");
+        if (!feeItem) continue;
         lineItems.push({
           itemId: feeItem.id,
           name: feeItem.name,
-          description: `${body.feePct ?? 4}% fee includes shipping, handling, delivery, and energy surcharge.`,
-          rate: body.feeAmount,
-          quantity: 1,
+          description: line.description,
+          rate: line.rate,
+          quantity: line.quantity,
         });
+        continue;
       }
+
+      if (line.kind === "film") {
+        const item = await searchBooksItem(orgId, line.itemName) || await searchBooksItem(orgId, "Other Film");
+        if (!item) {
+          unmatchedFilms.push(line.description || "Unknown film");
+          continue;
+        }
+        if (!filmItem) filmItem = item;
+        lineItems.push({
+          itemId: item.id,
+          name: item.name,
+          description: line.description,
+          rate: line.rate,
+          quantity: line.quantity,
+        });
+        continue;
+      }
+
+      const item = filmItem || await searchBooksItem(orgId, "Other Film");
+      if (!item) continue;
+      lineItems.push({
+        itemId: item.id,
+        name: line.name,
+        description: line.description,
+        rate: line.rate,
+        quantity: line.quantity,
+      });
     }
 
     if (!lineItems.length) {
@@ -206,18 +291,18 @@ export async function POST(request: NextRequest) {
     // on the Deal in submit-pricing/route.ts) — populates Books' own
     // "Installation Address" custom field so it's never blank/"null null
     // null" on the generated estimate.
-    const { city: installCity, state: installState, zip: installZip } = parseCityStateZip(body.cityStateZip);
     const result = await createBooksEstimate(orgId, {
       customerId,
       dealId: body.dealId,
       opportunityNumber: body.opportunityNumber,
       estimateDate: parseDateForBooks(body.date),
       salespersonName: body.userName,
+      discountAmount: planned.discount,
       lineItems,
       installationStreet: body.address,
-      installationCity: installCity,
-      installationState: installState,
-      installationZip: installZip,
+      installationCity: installParsed.city,
+      installationState: installParsed.state,
+      installationZip: installParsed.zip,
     });
 
     // ── 5. Wait for Zoho's CRM↔Books sync to create the matching
@@ -239,6 +324,9 @@ export async function POST(request: NextRequest) {
       crmRecordId,
       estimateUrl,
       syncPending: !crmRecordId,
+      customerLinked: linked.linked,
+      linkWarning: linked.warning,
+      warnings: warnings.length ? warnings : undefined,
       unmatchedFilms: unmatchedFilms.length ? unmatchedFilms : undefined,
     });
   } catch (e) {

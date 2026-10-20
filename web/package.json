@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "tsc -p tsconfig.test.json --pretty false && node --experimental-strip-types --test src/lib/address.test.ts src/lib/estimateLines.test.ts src/lib/booksCustomerLink.test.ts"
   },
   "dependencies": {
     "@sparticuz/chromium": "^147.0.0",
