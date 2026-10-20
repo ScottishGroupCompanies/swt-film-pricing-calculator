@@ -26,8 +26,8 @@ export interface PlannedEstimateLine {
 export interface PlannedEstimate {
   lines: PlannedEstimateLine[];
   /**
-   * Flat amount Books should subtract. Kept off the line items so we never
-   * send a negative rate (Books rejects those).
+   * Always 0. A lower total is absorbed into the line rates instead of a
+   * Books discount, so the estimate does not grow a Discount column.
    */
   discount: number;
 }
@@ -45,6 +45,47 @@ export function mapFilmToBooksItemName(film: string): string {
   if (f.includes("graffiti") || f.includes("anti graffiti")) return "Graffiti";
   if (f.includes("bird")) return "Bird Film";
   return "Other Film";
+}
+
+function lineAmount(line: PlannedEstimateLine): number {
+  return money(line.rate * (line.quantity > 0 ? line.quantity : 1));
+}
+
+function setLineAmount(line: PlannedEstimateLine, next: number): void {
+  const qty = line.quantity > 0 ? line.quantity : 1;
+  const rate = money(next / qty);
+  if (Math.abs(money(rate * qty) - next) < 0.001) {
+    line.rate = rate;
+    line.quantity = qty;
+  } else {
+    line.rate = next;
+    line.quantity = 1;
+  }
+}
+
+/** Lower line rates, film lines first, so the sum matches without a Books discount. */
+function absorbReduction(lines: PlannedEstimateLine[], amount: number): void {
+  let remaining = money(amount);
+  const groups = [
+    lines.filter((line) => line.kind === "film"),
+    lines.filter((line) => line.kind === "minimum" || line.kind === "adjustment"),
+    lines.filter((line) => line.kind === "fee"),
+  ];
+  for (const group of groups) {
+    if (remaining < 0.01) break;
+    const amounts = group.map(lineAmount);
+    const sum = money(amounts.reduce((total, value) => total + value, 0));
+    if (sum <= 0) continue;
+    const target = money(Math.min(remaining, sum));
+    let left = target;
+    group.forEach((line, index) => {
+      const cut = index === group.length - 1 ? left : money(target * (amounts[index] / sum));
+      const applied = money(Math.min(Math.max(cut, 0), lineAmount(line), left));
+      setLineAmount(line, money(lineAmount(line) - applied));
+      left = money(left - applied);
+    });
+    remaining = money(remaining - (target - left));
+  }
 }
 
 function filmRateAndQty(lineTotal: number, qty: number): { rate: number; quantity: number } {
@@ -114,7 +155,11 @@ export function planEstimateLines(input: {
       quantity: 1,
     });
   } else if (delta <= -0.01) {
-    discount = money(Math.abs(delta));
+    // A lower calculator total (a discount, or other reduction) is folded
+    // into the line rates. Books is not given a discount amount, discount
+    // type, or per-line discount — those are what render the Discount column.
+    absorbReduction(planned, money(Math.abs(delta)));
+    discount = 0;
   }
 
   if (fee > 0) {

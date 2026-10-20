@@ -9,10 +9,10 @@ import {
   type User, type Film, type RowData, type RowCalc,
 } from "@/lib/pricingData";
 import { parseCityStateZip } from "@/lib/address";
+import { placeFilmPicker, type FilmPickerPlacement } from "@/lib/filmPickerPlacement";
 import {
-  buildCustomerProposal, buildInternalRecord, buildCommissionSheet, buildPrintableHTML,
-  defaultCommissionSheetExtras,
-  downloadFile, printHTML, type ProposalData, type ProposalLine, type CommissionSheetExtras,
+  buildCustomerProposal, buildInternalRecord, buildPrintableHTML,
+  downloadFile, printHTML, type ProposalData, type ProposalLine,
 } from "@/lib/proposal";
 
 // ─── BRAND THEME ──────────────────────────────────────────────────────────
@@ -80,7 +80,25 @@ function FilmPicker({
   const triggerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 580 });
+  const [dropdownPos, setDropdownPos] = useState<FilmPickerPlacement>({ top: 0, left: 0, width: 580, maxHeight: 520 });
+
+  const placeDropdown = useCallback((scrollIfCramped: boolean) => {
+    const el = triggerRef.current;
+    if (!el) return;
+    let rect = el.getBoundingClientRect();
+    // If the trigger is jammed against both edges (short viewport), bring
+    // it to the middle of the page first, then measure again.
+    if (scrollIfCramped && window.innerHeight - rect.bottom < 180 && rect.top < 180) {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+      rect = el.getBoundingClientRect();
+    }
+    setDropdownPos(placeFilmPicker({
+      trigger: { top: rect.top, bottom: rect.bottom, left: rect.left },
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      isMobile,
+    }));
+  }, [isMobile]);
 
   // Close on outside click
   useEffect(() => {
@@ -97,46 +115,26 @@ function FilmPicker({
     return () => document.removeEventListener("mousedown", h);
   }, [open]);
 
-  // Calculate position when opening
-  useEffect(() => {
-    if (open && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      // On phones, use nearly the full viewport width instead of a fixed
-      // 580px dropdown (which would overflow and force horizontal scroll).
-      const dropdownWidth = isMobile ? Math.min(window.innerWidth - 24, 420) : 580;
-      // Position below the trigger, aligned to left edge
-      let left = isMobile ? 12 : rect.left;
-      // If it would overflow the right edge, shift left
-      if (!isMobile && left + dropdownWidth > window.innerWidth - 16) {
-        left = window.innerWidth - dropdownWidth - 16;
-      }
-      // If it would overflow the left edge, align to left
-      if (left < 16 && !isMobile) left = 16;
-
-      const top = rect.bottom + 4;
-      setDropdownPos({ top, left, width: dropdownWidth });
-      setTimeout(() => inputRef.current?.focus(), 80);
-    }
-  }, [open, isMobile]);
-
-  // Recalculate on scroll/resize while open
+  // Place the panel when it opens. Prefer below the trigger; flip upward
+  // when the bottom of the viewport would clip it. The list scrolls inside.
   useEffect(() => {
     if (!open) return;
-    const update = () => {
-      if (triggerRef.current) {
-        const rect = triggerRef.current.getBoundingClientRect();
-        const dropdownWidth = isMobile ? Math.min(window.innerWidth - 24, 420) : 580;
-        const left = isMobile ? 12 : rect.left;
-        setDropdownPos({ top: rect.bottom + 4, left, width: dropdownWidth });
-      }
-    };
+    placeDropdown(true);
+    const focusTimer = setTimeout(() => inputRef.current?.focus(), 80);
+    return () => clearTimeout(focusTimer);
+  }, [open, placeDropdown]);
+
+  // Keep the panel pinned to the trigger while the page scrolls or resizes.
+  useEffect(() => {
+    if (!open) return;
+    const update = () => placeDropdown(false);
     window.addEventListener("scroll", update, true);
     window.addEventListener("resize", update);
     return () => {
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [open, isMobile]);
+  }, [open, placeDropdown]);
 
   const filtered = useMemo(() => {
     const lo = q.toLowerCase();
@@ -200,8 +198,10 @@ function FilmPicker({
           style={{
             position: "fixed",
             top: dropdownPos.top,
+            bottom: dropdownPos.bottom,
             left: dropdownPos.left,
             width: dropdownPos.width,
+            maxHeight: dropdownPos.maxHeight,
             background: THEME.white,
             border: `1px solid ${THEME.border}`,
             borderRadius: 12,
@@ -209,11 +209,11 @@ function FilmPicker({
             boxShadow: "0 16px 48px rgba(0,0,0,.18)",
             display: "flex",
             flexDirection: "column",
-            maxHeight: "min(520px, calc(100vh - 80px))",
+            overflow: "hidden",
           }}
         >
           {/* Search + brand filters */}
-          <div style={{ padding: "10px 12px", borderBottom: `1px solid ${THEME.border}` }}>
+          <div style={{ padding: "10px 12px", borderBottom: `1px solid ${THEME.border}`, flexShrink: 0 }}>
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
               <div style={{ position: "relative", flex: 1 }}>
                 <svg style={{ position: "absolute", left: 10, top: 8, color: THEME.textMuted }} width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -279,7 +279,7 @@ function FilmPicker({
           </div>
 
           {/* Film list — 2 columns, many rows visible, scrollable */}
-          <div style={{ overflowY: "auto", flex: 1, padding: "4px 0" }}>
+          <div style={{ overflowY: "auto", flex: "1 1 auto", minHeight: 0, padding: "4px 0" }}>
             {filtered.length === 0 && (
               <div style={{ padding: "24px", textAlign: "center", color: THEME.textMuted, fontSize: 13 }}>
                 No films found matching &quot;{q}&quot;
@@ -336,7 +336,7 @@ function FilmPicker({
               style={{
                 padding: "9px 12px", borderTop: `1px solid ${THEME.border}`,
                 fontSize: 12, color: "#e04d46", cursor: "pointer", textAlign: "center",
-                fontWeight: 500,
+                fontWeight: 500, flexShrink: 0,
               }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "#fef2f2")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "")}
@@ -646,157 +646,57 @@ const cellSt: React.CSSProperties = {
   fontFamily: "inherit", outline: "none",
 };
 
+// The description starts blank (quotes still fall back to "Window 1") and
+// has to look like something the rep can rename to a room.
+function RoomDescriptionInput({
+  value, onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+      <svg
+        width="13" height="13" viewBox="0 0 24 24" fill="none"
+        stroke={focused ? THEME.greenDark : THEME.medGray}
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        aria-hidden="true"
+        style={{ position: "absolute", left: 8, pointerEvents: "none" }}
+      >
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </svg>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        placeholder="Room / location (e.g. Kitchen)"
+        aria-label="Room or location"
+        title="Type a room or location, such as Kitchen or basement"
+        style={{
+          width: "100%",
+          padding: "7px 8px 7px 26px",
+          border: `1px solid ${focused ? THEME.green : THEME.border}`,
+          borderRadius: 6,
+          background: THEME.white,
+          color: THEME.textDark,
+          fontSize: 12,
+          fontFamily: "inherit",
+          outline: "none",
+        }}
+      />
+    </div>
+  );
+}
+
 const smallBtnSt: React.CSSProperties = {
   padding: "6px 12px", background: THEME.white, border: `1px solid ${THEME.border}`,
   borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer",
   fontFamily: "inherit", color: THEME.darkGray,
   transition: "all 0.15s",
 };
-
-// ─── COMMISSION SHEET PDF EDITOR (V-10.9 template, editable before download) ─
-// Mirrors the exact grid layout from lib/proposal.ts's buildCommissionSheetHTML
-// so what the rep edits here is what ends up in the downloaded PDF. Editing
-// only touches local component state (CommissionSheetExtras) — nothing here
-// is saved to Zoho or the main calculator's own state.
-
-const csInputSt: React.CSSProperties = {
-  width: "100%", padding: "4px 6px", border: "1px solid #ccc", borderRadius: 3,
-  fontSize: 11, fontFamily: "inherit", outline: "none", background: THEME.white,
-};
-
-const csCellTdSt: React.CSSProperties = {
-  border: "1px solid #000", padding: 2, fontSize: 10,
-};
-
-function CommissionSheetPdfEditor({
-  proposalData, extras, onChange,
-}: {
-  proposalData: ProposalData;
-  extras: CommissionSheetExtras;
-  onChange: (e: CommissionSheetExtras) => void;
-}) {
-  const update = (patch: Partial<CommissionSheetExtras>) => onChange({ ...extras, ...patch });
-  const updateLine = (i: number, patch: Partial<CommissionSheetExtras["lineExtras"][number]>) => {
-    const next = extras.lineExtras.slice();
-    next[i] = { ...next[i], ...patch };
-    onChange({ ...extras, lineExtras: next });
-  };
-
-  const subtotal = proposalData.subtotalAfterDiscount ?? proposalData.total;
-  const totalCost = proposalData.totalCost ?? proposalData.total;
-  const balanceDue = proposalData.balanceDue ?? totalCost;
-
-  return (
-    <div style={{ padding: "16px 24px", overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-      <p style={{ fontSize: 11, color: THEME.textMuted, marginBottom: 12 }}>
-        Edit any field below — Room, Exposure, Frame/Glass, Pane Type, Manufacturer, Warranty, dates, and Notes
-        aren&apos;t captured elsewhere in the calculator, so fill them in here before downloading. Pricing/commission
-        figures come from the job above and update automatically.
-      </p>
-
-      {/* Header info grid */}
-      <div style={{ display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap" }}>
-        <table style={{ borderCollapse: "collapse", flex: "1 1 320px" }}>
-          <tbody>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", width: 120 }}>Customer Name</td><td style={csCellTdSt}>{proposalData.customer || "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Address</td><td style={csCellTdSt}>{proposalData.address || "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>City, State, Zip</td><td style={csCellTdSt}>{proposalData.cityStateZip || "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Phone</td><td style={csCellTdSt}>{proposalData.phone || "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Email</td><td style={csCellTdSt}>{proposalData.email || "—"}</td></tr>
-          </tbody>
-        </table>
-        <table style={{ borderCollapse: "collapse", flex: "1 1 260px" }}>
-          <tbody>
-            <tr>
-              <td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", width: 120 }}>Estimate Date</td>
-              <td style={csCellTdSt}><input style={csInputSt} value={extras.estimateDate} onChange={(e) => update({ estimateDate: e.target.value })} /></td>
-            </tr>
-            <tr>
-              <td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Installation Date</td>
-              <td style={csCellTdSt}><input style={csInputSt} value={extras.installationDate} onChange={(e) => update({ installationDate: e.target.value })} /></td>
-            </tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Designer</td><td style={csCellTdSt}>{proposalData.userName || "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Location</td><td style={csCellTdSt}>{proposalData.userLoc || "—"}</td></tr>
-            <tr>
-              <td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1" }}>Manufacturer</td>
-              <td style={csCellTdSt}><input style={csInputSt} value={extras.manufacturer} onChange={(e) => update({ manufacturer: e.target.value })} placeholder="e.g. 3M" /></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div style={{ marginBottom: 10, fontSize: 12 }}>
-        <strong style={{ textDecoration: "underline" }}>Warranty:</strong>{" "}
-        <input
-          style={{ ...csInputSt, width: 300, display: "inline-block" }}
-          value={extras.warranty}
-          onChange={(e) => update({ warranty: e.target.value })}
-          placeholder="e.g. 10 Year Commercial"
-        />
-      </div>
-
-      {/* Line items */}
-      <table style={{ borderCollapse: "collapse", width: "100%", marginBottom: 12 }}>
-        <thead>
-          <tr>
-            {["Room", "Exp.", "Frame/Glass", "Pane Type", "Film", "Dims", "Qty", "Sq. Ft.", "Price"].map((h) => (
-              <th key={h} style={{ border: "1px solid #000", padding: "4px 6px", fontSize: 10, background: "#dce6f1", fontWeight: 700 }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {proposalData.lines.map((l, i) => {
-            const ex = extras.lineExtras[i] || { room: "", exposure: "", frameGlass: "", paneType: "" };
-            return (
-              <tr key={i}>
-                <td style={csCellTdSt}><input style={csInputSt} value={ex.room} onChange={(e) => updateLine(i, { room: e.target.value })} /></td>
-                <td style={csCellTdSt}><input style={csInputSt} value={ex.exposure} onChange={(e) => updateLine(i, { exposure: e.target.value })} /></td>
-                <td style={csCellTdSt}><input style={csInputSt} value={ex.frameGlass} onChange={(e) => updateLine(i, { frameGlass: e.target.value })} /></td>
-                <td style={csCellTdSt}><input style={csInputSt} value={ex.paneType} onChange={(e) => updateLine(i, { paneType: e.target.value })} /></td>
-                <td style={{ ...csCellTdSt, whiteSpace: "nowrap" }}>{l.film || "—"}{l.brand ? ` (${l.brand})` : ""}</td>
-                <td style={csCellTdSt}>{l.dims}</td>
-                <td style={{ ...csCellTdSt, textAlign: "center" }}>{l.qty}</td>
-                <td style={{ ...csCellTdSt, textAlign: "right" }}>{l.chargedSF != null ? l.chargedSF.toFixed(2) : "—"}</td>
-                <td style={{ ...csCellTdSt, textAlign: "right" }}>{l.lineTotal.toFixed(2)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        {/* Notes */}
-        <div style={{ flex: "2 1 320px" }}>
-          <label style={{ fontSize: 11, fontWeight: 700, display: "block", marginBottom: 4 }}>Notes</label>
-          <textarea
-            style={{ ...csInputSt, minHeight: 100, resize: "vertical" }}
-            value={extras.notes}
-            onChange={(e) => update({ notes: e.target.value })}
-            placeholder="Sq. Ft. Film Removal, French Panes, or any other job notes…"
-          />
-        </div>
-
-        {/* Financials (read-only, mirrors the job's numbers) */}
-        <table style={{ borderCollapse: "collapse", flex: "1 1 240px", height: "fit-content" }}>
-          <tbody>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Film Total</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(proposalData.total)}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Attachment/Other</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.attachmentOther ? fmt$(proposalData.attachmentOther) : "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Subtotal</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(subtotal)}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>{proposalData.feePct ?? 4}% Fees*</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(proposalData.feeAmount ?? 0)}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Total Cost</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(totalCost)}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Deposit</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.deposit ? fmt$(proposalData.deposit) : "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Balance Due</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{fmt$(balanceDue)}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Charged to Client</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.chargedToClient != null ? fmt$(proposalData.chargedToClient) : "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Difference</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.difference >= 0 ? "+" : "−"}{fmt$(Math.abs(proposalData.difference))}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>{proposalData.commRate != null ? (proposalData.commRate * 100).toFixed(0) : "—"}% Commission on Sale</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.baseCommission != null ? fmt$(proposalData.baseCommission) : "—"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Commission Over/Under</td><td style={{ ...csCellTdSt, textAlign: "right" }}>{proposalData.overUnderComm ? `${proposalData.overUnderComm >= 0 ? "+" : "−"}${fmt$(Math.abs(proposalData.overUnderComm))}` : "$0.00"}</td></tr>
-            <tr><td style={{ ...csCellTdSt, fontWeight: 700, background: "#dce6f1", textAlign: "right" }}>Total Commission</td><td style={{ ...csCellTdSt, textAlign: "right", fontWeight: 700 }}>{proposalData.commission != null ? fmt$(proposalData.commission) : "—"}</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 // ─── AUTO-SAVE / DRAFT RECOVERY ────────────────────────────────────────
 // Snapshot of every form field needed to fully restore an in-progress job
@@ -875,6 +775,10 @@ export default function PricingCalculator() {
     if (isTablet) return n === 3 ? "1fr 1fr" : "1fr 1fr";
     return n === 3 ? "1fr 1fr 1fr" : "1fr 1fr";
   };
+  // Description is wide enough for the room placeholder and the pencil.
+  const lineGrid = isTablet
+    ? "188px 1fr 40px 40px 36px 48px 78px 26px"
+    : "236px 1fr 48px 48px 42px 54px 88px 28px";
   const [user, setUser] = useState<User | null>(null);
   const router = useRouter();
 
@@ -921,10 +825,7 @@ export default function PricingCalculator() {
   const [opportunityNameTouched, setOpportunityNameTouched] = useState(false);
   const [minDim, setMinDim] = useState(MIN_DIM_DEFAULT);
   const [rows, setRows] = useState<RowData[]>([newRow(), newRow(), newRow()]);
-  const [activeTab, setActiveTab] = useState<"customer" | "internal" | "commission" | "commissionPdf">("customer");
-  const [commissionSheetExtras, setCommissionSheetExtras] = useState<CommissionSheetExtras | null>(null);
-  const [commissionPdfStatus, setCommissionPdfStatus] = useState<"idle" | "generating" | "error">("idle");
-  const [commissionPdfError, setCommissionPdfError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"customer" | "internal">("customer");
   const [showProposals, setShowProposals] = useState(false);
   const [chargedToClient, setChargedToClient] = useState<string>("");
   const [zohoStatus, setZohoStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
@@ -1212,14 +1113,6 @@ export default function PricingCalculator() {
 
   function handlePrint() {
     if (!proposalData) return;
-    if (activeTab === "commission") {
-      // The branded customer template doesn't have commission fields — print
-      // the plain-text Commission Sheet in a simple monospace wrapper instead.
-      const text = buildCommissionSheet(proposalData);
-      const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      printHTML(`<pre style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; padding: 24px;">${escaped}</pre>`);
-      return;
-    }
     printHTML(buildPrintableHTML(proposalData));
   }
 
@@ -1227,60 +1120,16 @@ export default function PricingCalculator() {
     if (!proposalData) return;
     const text = activeTab === "customer"
       ? buildCustomerProposal(proposalData)
-      : activeTab === "internal"
-        ? buildInternalRecord(proposalData)
-        : buildCommissionSheet(proposalData);
+      : buildInternalRecord(proposalData);
     const filename = `SWT-${(customer || "proposal").replace(/\s+/g, "-")}-${activeTab}.txt`;
     downloadFile(filename, text, "text/plain");
   }
 
   function handleDownloadHTML() {
     if (!proposalData) return;
-    if (activeTab === "commission") {
-      const text = buildCommissionSheet(proposalData);
-      const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const html = `<pre style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; padding: 24px;">${escaped}</pre>`;
-      const filename = `SWT-${(customer || "proposal").replace(/\s+/g, "-")}-commission.html`;
-      downloadFile(filename, html, "text/html");
-      return;
-    }
     const html = buildPrintableHTML(proposalData);
     const filename = `SWT-${(customer || "proposal").replace(/\s+/g, "-")}.html`;
     downloadFile(filename, html, "text/html");
-  }
-
-  // Renders the current edited Commission Sheet (V-10.9 template) to a PDF
-  // server-side (same htmlToPdf pipeline as the Zoho estimate PDF) and
-  // triggers a direct browser download — no Zoho involvement, this is a
-  // standalone document the rep can edit freely before downloading.
-  async function handleDownloadCommissionPdf() {
-    if (!proposalData || !commissionSheetExtras) return;
-    setCommissionPdfStatus("generating");
-    setCommissionPdfError(null);
-    try {
-      const res = await fetch("/api/commission-sheet-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proposalData, extras: commissionSheetExtras }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `PDF generation failed (${res.status})`);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `SWT-${(customer || "commission-sheet").replace(/\s+/g, "-")}-commission-sheet.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setCommissionPdfStatus("idle");
-    } catch (e) {
-      setCommissionPdfStatus("error");
-      setCommissionPdfError(e instanceof Error ? e.message : "PDF generation failed");
-    }
   }
 
   function resetJob() {
@@ -1807,12 +1656,12 @@ export default function PricingCalculator() {
                         display: "flex", flexDirection: "column", gap: 8,
                       }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                          <input
-                            value={row.desc}
-                            onChange={(e) => updateRow(row.id, "desc", e.target.value)}
-                            placeholder={`Window ${idx + 1}`}
-                            style={{ ...cellSt, flex: 1, fontWeight: 600 }}
-                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <RoomDescriptionInput
+                              value={row.desc}
+                              onChange={(value) => updateRow(row.id, "desc", value)}
+                            />
+                          </div>
                           <button
                             onClick={() => removeRow(row.id)}
                             style={{
@@ -1918,9 +1767,7 @@ export default function PricingCalculator() {
                   {/* Header row */}
                   <div style={{
                     display: "grid",
-                    gridTemplateColumns: isTablet
-                      ? "110px 1fr 46px 46px 40px 52px 84px 28px"
-                      : "130px 1fr 52px 52px 48px 60px 90px 32px",
+                    gridTemplateColumns: lineGrid,
                     background: THEME.lightGray, borderBottom: `1px solid ${THEME.border}`,
                   }}>
                     {["Description", "Film", "W\"", "H\"", "Qty", "Roll", "Line Total", ""].map((h, i) => (
@@ -1939,9 +1786,7 @@ export default function PricingCalculator() {
                     return (
                       <div key={row.id} style={{
                         display: "grid",
-                        gridTemplateColumns: isTablet
-                          ? "110px 1fr 46px 46px 40px 52px 84px 28px"
-                          : "130px 1fr 52px 52px 48px 60px 90px 32px",
+                        gridTemplateColumns: lineGrid,
                         borderBottom: `1px solid ${THEME.lightGray}`, alignItems: "center",
                         background: THEME.white,
                         transition: "background 0.1s",
@@ -1949,13 +1794,11 @@ export default function PricingCalculator() {
                       onMouseEnter={(e) => (e.currentTarget.style.background = THEME.lightGray)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = THEME.white)}
                       >
-                        {/* Description */}
-                        <div style={{ padding: "5px 6px" }}>
-                          <input
+                        {/* Description — editable room / location */}
+                        <div style={{ padding: "5px 6px", minWidth: 0 }}>
+                          <RoomDescriptionInput
                             value={row.desc}
-                            onChange={(e) => updateRow(row.id, "desc", e.target.value)}
-                            placeholder={`Window ${idx + 1}`}
-                            style={{ ...cellSt, width: "100%" }}
+                            onChange={(value) => updateRow(row.id, "desc", value)}
                           />
                         </div>
                         {/* Film picker */}
@@ -2121,34 +1964,21 @@ export default function PricingCalculator() {
                     Proposal
                   </span>
                 </p>
-                {activeTab === "commissionPdf" ? (
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={handleDownloadCommissionPdf} disabled={commissionPdfStatus === "generating"} style={smallBtnSt}>
-                      {commissionPdfStatus === "generating" ? "Generating…" : "⬇ Download PDF"}
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={handlePrint} style={smallBtnSt}>🖨 Print</button>
-                    <button onClick={handleDownloadHTML} style={smallBtnSt}>📄 HTML</button>
-                    <button onClick={handleDownloadText} style={smallBtnSt}>
-                      📝 {activeTab === "customer" ? "Customer" : activeTab === "internal" ? "Internal" : "Commission"} .txt
-                    </button>
-                  </div>
-                )}
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={handlePrint} style={smallBtnSt}>🖨 Print</button>
+                  <button onClick={handleDownloadHTML} style={smallBtnSt}>📄 HTML</button>
+                  <button onClick={handleDownloadText} style={smallBtnSt}>
+                    📝 {activeTab === "customer" ? "Customer" : "Internal"} .txt
+                  </button>
+                </div>
               </div>
 
               {/* Tabs */}
               <div style={{ display: "flex", padding: "0 24px", borderBottom: `1px solid ${THEME.border}`, flexWrap: "wrap" }}>
-                {(["customer", "internal", "commission", "commissionPdf"] as const).map((t) => (
+                {(["customer", "internal"] as const).map((t) => (
                   <button
                     key={t}
-                    onClick={() => {
-                      setActiveTab(t);
-                      if (t === "commissionPdf" && !commissionSheetExtras) {
-                        setCommissionSheetExtras(defaultCommissionSheetExtras(proposalData));
-                      }
-                    }}
+                    onClick={() => setActiveTab(t)}
                     style={{
                       padding: "10px 16px", fontSize: 12,
                       fontWeight: activeTab === t ? 600 : 500,
@@ -2159,39 +1989,21 @@ export default function PricingCalculator() {
                       textTransform: "capitalize", whiteSpace: "nowrap",
                     }}
                   >
-                    {t === "customer" ? "Customer Proposal" : t === "internal" ? "Internal Record" : t === "commission" ? "Commission Sheet" : "Commission Sheet PDF"}
+                    {t === "customer" ? "Customer Proposal" : "Internal Record"}
                   </button>
                 ))}
               </div>
 
-              {/* Proposal content */}
-              {activeTab === "commissionPdf" ? (
-                commissionSheetExtras && (
-                  <CommissionSheetPdfEditor
-                    proposalData={proposalData}
-                    extras={commissionSheetExtras}
-                    onChange={setCommissionSheetExtras}
-                  />
-                )
-              ) : (
-                <div style={{
-                  padding: "16px 24px",
-                  fontSize: 12, lineHeight: 1.8, color: THEME.darkGray,
-                  whiteSpace: "pre-wrap", fontFamily: "ui-monospace, 'SF Mono', monospace",
-                  maxHeight: 500, overflowY: "auto",
-                }}>
-                  {activeTab === "customer"
-                    ? buildCustomerProposal(proposalData)
-                    : activeTab === "internal"
-                      ? buildInternalRecord(proposalData)
-                      : buildCommissionSheet(proposalData)}
-                </div>
-              )}
-              {commissionPdfStatus === "error" && commissionPdfError && (
-                <div style={{ padding: "0 24px 16px", color: "#c0392b", fontSize: 12 }}>
-                  {commissionPdfError}
-                </div>
-              )}
+              <div style={{
+                padding: "16px 24px",
+                fontSize: 12, lineHeight: 1.8, color: THEME.darkGray,
+                whiteSpace: "pre-wrap", fontFamily: "ui-monospace, 'SF Mono', monospace",
+                maxHeight: 500, overflowY: "auto",
+              }}>
+                {activeTab === "customer"
+                  ? buildCustomerProposal(proposalData)
+                  : buildInternalRecord(proposalData)}
+              </div>
             </section>
           )}
         </div>
@@ -2431,91 +2243,6 @@ export default function PricingCalculator() {
               </div>
             )}
 
-            {/* Charged to Client + Commission card */}
-            {totals.total != null && user && (
-              <div style={{
-                background: THEME.greenBg, border: `1px solid ${THEME.greenBorder}`,
-                borderRadius: 10, padding: "14px 16px", marginBottom: 14,
-              }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 700, color: THEME.greenDark,
-                  textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8,
-                }}>
-                  Commission Breakdown
-                </div>
-
-                {/* Charged to Client input */}
-                <div style={{ marginBottom: 10 }}>
-                  <label style={{
-                    fontSize: 11, color: THEME.greenDark, fontWeight: 500,
-                    display: "block", marginBottom: 4,
-                  }}>
-                    Charged to Client
-                  </label>
-                  <input
-                    type="number"
-                    value={chargedToClient}
-                    onChange={(e) => setChargedToClient(e.target.value)}
-                    placeholder={totals.total?.toFixed(2) || ""}
-                    style={{
-                      width: "100%", padding: "7px 10px",
-                      border: `1px solid ${THEME.greenBorder}`, borderRadius: 6,
-                      background: THEME.white, color: THEME.textDark,
-                      fontSize: 13, fontFamily: "inherit", outline: "none",
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  />
-                </div>
-
-                {/* Base commission line */}
-                {totals.baseCommission != null && (
-                  <div style={{
-                    display: "flex", justifyContent: "space-between",
-                    padding: "3px 0", fontSize: 12, color: THEME.greenDark,
-                  }}>
-                    <span>{(totals.commRate! * 100).toFixed(0)}% of {fmt$(totals.subtotalAfterDiscount)}</span>
-                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt$(totals.baseCommission)}</span>
-                  </div>
-                )}
-
-                {/* Over/under line — overcharge: user's own rate on the overage; undercharge/loss: 50/50 split with the company */}
-                {totals.overUnderComm !== 0 && (
-                  <div style={{
-                    display: "flex", justifyContent: "space-between",
-                    padding: "3px 0", fontSize: 12, color: totals.overUnderComm < 0 ? "#e04d46" : THEME.greenDark,
-                  }}>
-                    <span>
-                      {totals.difference > 0
-                        ? `${(totals.commRate! * 100).toFixed(0)}% of overage (${fmt$(totals.difference)})`
-                        : `50/50 split of loss (${fmt$(totals.difference)})`}
-                    </span>
-                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {totals.overUnderComm >= 0 ? "+" : "−"}{fmt$(Math.abs(totals.overUnderComm))}
-                    </span>
-                  </div>
-                )}
-
-                {/* Total commission */}
-                {totals.totalCommission != null && (
-                  <div style={{
-                    display: "flex", justifyContent: "space-between", alignItems: "baseline",
-                    borderTop: `1px solid ${THEME.greenBorder}`, marginTop: 6, paddingTop: 8,
-                  }}>
-                    <span style={{
-                      fontSize: 14, fontWeight: 600, color: THEME.greenDark,
-                    }}>
-                      Total Commission
-                    </span>
-                    <span style={{
-                      fontSize: 22, fontWeight: 700, color: THEME.greenDark,
-                      fontVariantNumeric: "tabular-nums",
-                    }}>
-                      {fmt$(totals.totalCommission)}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Action buttons */}
@@ -2739,32 +2466,6 @@ export default function PricingCalculator() {
               </div>
             )}
 
-            {/* Generate Commission Sheet button — opens the editable
-                Commission Sheet PDF tab directly, without requiring the
-                separate "Generate Proposal" step. Matches the real flow:
-                fill out form -> Send to Zoho -> rep fills out the estimate
-                IN Zoho -> comes back here -> Generate Commission Sheet. */}
-            {zohoEnabled && zohoResult?.dealId && (
-              <div style={{ marginTop: 4 }}>
-                <div style={{ height: 1, background: THEME.border, margin: "8px 0" }} />
-                <button
-                  onClick={() => {
-                    setShowProposals(true);
-                    setActiveTab("commissionPdf");
-                    if (proposalData && !commissionSheetExtras) {
-                      setCommissionSheetExtras(defaultCommissionSheetExtras(proposalData));
-                    }
-                  }}
-                  style={{
-                    width: "100%", padding: 10, background: THEME.green, color: "#fff",
-                    border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                    cursor: "pointer", fontFamily: "inherit",
-                  }}
-                >
-                  🧾 Generate Commission Sheet
-                </button>
-              </div>
-            )}
             <button
               onClick={resetJob}
               style={{

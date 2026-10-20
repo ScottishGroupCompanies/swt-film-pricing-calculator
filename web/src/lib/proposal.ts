@@ -334,16 +334,6 @@ export function buildInternalRecord(d: ProposalData): string {
     ` | Line: ${fmt$(l.lineTotal)}`
   ).join("\n");
 
-  const commBreakdown = d.baseCommission != null
-    ? `  Base commission: ${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% of ${fmt$(d.subtotalAfterDiscount ?? d.total)} = ${fmt$(d.baseCommission)}\n` +
-      (d.overUnderComm !== 0
-        ? d.difference > 0
-          ? `  Over/under: ${d.commRate != null ? (d.commRate * 100).toFixed(0) : "—"}% of ${fmt$(d.difference)} overage = ${signed$(d.overUnderComm)}\n`
-          : `  Over/under: 50/50 split of ${signed$(d.difference)} loss = ${signed$(d.overUnderComm)}\n`
-        : "") +
-      `  Total commission: ${d.commission != null ? fmt$(d.commission) : "—"}`
-    : `  Commission: N/A (no user selected)`;
-
   const contactLines = buildContactLines(d);
 
   const adjustmentBreakdown =
@@ -371,10 +361,7 @@ TOTALS:
 ${d.chargedToClient != null ? `  Charged to client: ${fmt$(d.chargedToClient)}\n  Difference: ${signed$(d.difference)}` : ""}
 
 ADJUSTMENTS:
-${adjustmentBreakdown}
-
-COMMISSION:
-${commBreakdown}`;
+${adjustmentBreakdown}`;
 }
 
 // ─── COMMISSION SHEET PDF (V-10.9 template) ───────────────────────────────

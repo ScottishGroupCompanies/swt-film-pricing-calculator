@@ -15,7 +15,7 @@ const cormorant = Cormorant_Garamond({
 
 export const metadata: Metadata = {
   title: "SWT Film Pricing Calculator",
-  description: "Scottish Window Tinting — internal film pricing and commission calculator for sales reps",
+  description: "Scottish Window Tinting — internal film pricing calculator for sales reps",
 };
 
 export default function RootLayout({

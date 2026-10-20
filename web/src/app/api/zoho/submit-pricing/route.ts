@@ -13,11 +13,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   searchContact, createContact, searchAccount, createAccount, createDeal, addNote, appendSheetRow,
-  parseCityStateZip, getRecord, updateRecord,
+  parseCityStateZip, getRecord, updateRecord, findCrmUserIdByEmail,
   type ZohoCRMRecord,
 } from "@/lib/zoho";
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { findUserById } from "@/lib/auth";
+import { resolveDealOwner } from "@/lib/zohoOwners";
 
 interface PricingLineItem {
   desc: string;
@@ -283,11 +284,13 @@ export async function POST(request: NextRequest) {
       const dealDescription = buildDealDescription(body);
       const { city: installCity, state: installState, zip: installZip } = parseCityStateZip(body.cityStateZip);
 
-      // Owner = the currently logged-in rep's real Zoho user ID (from their
-      // server-side session, never trusted from client input) — makes them
-      // the Opportunity Owner in Zoho, as requested.
+      // Owner = the logged-in rep, from the server session (never the client).
+      // Reps with a stored id keep it. Katie is resolved from her CRM email.
       const sessionUserId = await getSessionUserId();
       const sessionUser = sessionUserId ? findUserById(sessionUserId) : null;
+      const owner = sessionUser
+        ? await resolveDealOwner(sessionUser, findCrmUserIdByEmail)
+        : null;
 
       const dealResult = await createDeal({
         dealName,
@@ -297,7 +300,7 @@ export async function POST(request: NextRequest) {
         stage: "Qualification",
         description: dealDescription,
         userName: body.userName,
-        ownerZohoUserId: sessionUser?.zohoUserId,
+        ownerZohoUserId: owner?.id,
         jobType: body.jobType,
         installationStreet: body.address,
         installationCity: installCity,

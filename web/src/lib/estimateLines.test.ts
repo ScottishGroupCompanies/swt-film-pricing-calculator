@@ -44,7 +44,7 @@ test("totalCost still forces a match when minAdj was not sent", () => {
   assert.equal(lines.lines.find((line) => line.kind === "adjustment")?.rate, 159.26);
 });
 
-test("a discount that lowers the deal total is a flat discount, and the sum still matches", () => {
+test("a discount is folded into the film rate so Books is not given a discount column", () => {
   const lines = planEstimateLines({
     lines: [{ desc: "Window", qty: 1, film: "Solar", lineTotal: 400 }],
     minAdj: 0,
@@ -52,7 +52,26 @@ test("a discount that lowers the deal total is a flat discount, and the sum stil
     feePct: 4,
     totalCost: 395.2,
   });
-  assert.equal(lines.discount, 20);
+  assert.equal(lines.discount, 0);
+  assert.equal(lines.lines.find((line) => line.kind === "film")?.rate, 380);
+  assert.equal(lines.lines.find((line) => line.kind === "fee")?.rate, 15.2);
   assert.equal(lines.lines.some((line) => line.rate < 0), false);
   assert.equal(plannedEstimateTotal(lines), 395.2);
+});
+
+test("a discount split across two windows keeps the estimate total exact", () => {
+  const lines = planEstimateLines({
+    lines: [
+      { desc: "Kitchen", qty: 1, film: "Solar", lineTotal: 100 },
+      { desc: "Basement", qty: 2, film: "Solar", lineTotal: 300 },
+    ],
+    feeAmount: 0,
+    totalCost: 360,
+  });
+  const films = lines.lines.filter((line) => line.kind === "film");
+  assert.equal(films[0]?.rate, 90);
+  assert.equal(films[1]?.rate, 135);
+  assert.equal(films[1]?.quantity, 2);
+  assert.equal(lines.discount, 0);
+  assert.equal(plannedEstimateTotal(lines), 360);
 });
