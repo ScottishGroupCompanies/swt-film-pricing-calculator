@@ -8,10 +8,13 @@ import {
   resolveDealOwner,
 } from "./zohoOwners.ts";
 
+const KATIE_CRM_USER_ID = "6168763000002178001";
+
 const katie = {
   id: "katie",
   name: "Katie",
   zohoEmail: "katie@scottishwindowtinting.com",
+  zohoUserId: KATIE_CRM_USER_ID,
 };
 
 test("matches a CRM user by email, ignoring case and surrounding space", () => {
@@ -25,9 +28,21 @@ test("matches a CRM user by email, ignoring case and surrounding space", () => {
   assert.equal(id, "222");
 });
 
-test("Katie's owner comes from the email lookup, not a stored id", async () => {
+test("a successful email lookup still wins over Katie's stored id", async () => {
   const resolved = await resolveDealOwner(katie, async () => "6168763000099999001", {});
   assert.deepEqual(resolved, { id: "6168763000099999001", source: "email" });
+});
+
+test("Katie's confirmed CRM user id is the owner when the users lookup fails", async () => {
+  const resolved = await resolveDealOwner(katie, async () => {
+    throw new Error("Zoho CRM API error (401)");
+  }, {});
+  assert.deepEqual(resolved, { id: KATIE_CRM_USER_ID, source: "stored" });
+});
+
+test("Katie's confirmed CRM user id is the owner when the lookup finds nobody", async () => {
+  const resolved = await resolveDealOwner(katie, async () => null, {});
+  assert.deepEqual(resolved, { id: KATIE_CRM_USER_ID, source: "stored" });
 });
 
 test("an env override wins over the email lookup for that login", async () => {
@@ -65,9 +80,10 @@ test("other users keep their stored Zoho id and do not call the lookup", async (
   assert.equal(lookups, 0);
 });
 
-test("a failed Katie lookup tells the operator which env var to set", async () => {
+test("a failed lookup with no stored id tells the operator which env var to set", async () => {
+  const { zohoUserId: _stored, ...withoutId } = katie;
   await assert.rejects(
-    () => resolveDealOwner(katie, async () => {
+    () => resolveDealOwner(withoutId, async () => {
       throw new Error("Zoho CRM API error (401)");
     }, {}),
     (err: unknown) => {

@@ -1,7 +1,7 @@
 // Resolves which Zoho CRM user owns a deal for the logged-in calculator user.
-// Users with a stored id (Dana, Amy, …) keep that id. Users with a Zoho email
-// (Katie) are resolved by looking that mailbox up, or by an env override.
-// A stored id is never used as a stand-in for an email lookup.
+// An env override wins. Otherwise a Zoho email is looked up, and if that
+// lookup cannot run (for example the token lacks ZohoCRM.users.READ) the
+// stored id is used. Users with only a stored id are not looked up.
 
 export interface OwnerUser {
   id: string;
@@ -73,6 +73,8 @@ export async function resolveDealOwner(
       lookupError = e instanceof Error ? e.message : String(e);
     }
     if (lookedUp) return { id: lookedUp, source: "email" };
+    // Confirmed stored id (Katie) still owns the deal when users.READ is missing.
+    if (user.zohoUserId) return { id: user.zohoUserId, source: "stored" };
 
     const key = crmUserIdEnvKey(user.id);
     const why = lookupError

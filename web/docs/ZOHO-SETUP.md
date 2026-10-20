@@ -201,11 +201,11 @@ There is no field on a single estimate that hides the column. Turn the preferenc
 
 Each quote's Opportunity owner is the rep who is logged in. Dana, Amy, Blake, Mike, Jenny, and Admin keep the CRM user ids already stored with their logins. Those ids are not changed by this lookup.
 
-Katie logs in with PIN `0000`. She does not have a stored CRM user id. When she sends a quote, the app looks up the active CRM user whose email is `katie@scottishwindowtinting.com` and sets that user as `Deal.Owner`. The same email is used to find her Zoho Books salesperson, and that salesperson id is set on the estimate. If Books has no salesperson with that email, the estimate is still created and labeled with the name Katie, and the calculator shows a warning.
+Katie logs in with PIN `0000`. Her CRM user id is `6168763000002178001`, confirmed from Setup → Users → Katie in org `848141664` (the id in that user's URL). Quotes she sends use that id as `Deal.Owner` with no env var required. If the token has `ZohoCRM.users.READ`, the app still looks up `katie@scottishwindowtinting.com` first and uses the id that lookup returns. If the lookup fails or the scope is missing, it falls back to `6168763000002178001`. The same email is used to find her Zoho Books salesperson, and that salesperson id is set on the estimate. If Books has no salesperson with that email, the estimate is still created and labeled with the name Katie, and the calculator shows a warning.
 
-The lookup calls `GET /crm/v2/users` (search by email, then the active-user list). That needs the `ZohoCRM.users.READ` scope on the refresh token, in addition to the CRM and Books scopes already in use. Books salesperson lookup uses the existing `ZohoBooks.fullaccess.all` scope (`GET /books/v3/salespersons`).
+The lookup calls `GET /crm/v2/users` (search by email, then the active-user list). Books salesperson lookup uses the existing `ZohoBooks.fullaccess.all` scope (`GET /books/v3/salespersons`).
 
-If the users API cannot be called, set Katie's CRM user id explicitly. In Zoho CRM open Setup → Users → Katie and copy the id from the user URL. Do not guess an id. Add it in Vercel (and in `web/.env.local` for local runs), then redeploy:
+`ZOHO_CRM_USER_ID_KATIE` is optional. Set it only to override the id above:
 
 ```
 ZOHO_CRM_USER_ID_KATIE=
