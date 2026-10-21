@@ -80,18 +80,12 @@ function FilmPicker({
   const triggerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<FilmPickerPlacement>({ top: 0, left: 0, width: 580, maxHeight: 520 });
+  const [dropdownPos, setDropdownPos] = useState<FilmPickerPlacement | null>(null);
 
-  const placeDropdown = useCallback((scrollIfCramped: boolean) => {
+  const placeDropdown = useCallback(() => {
     const el = triggerRef.current;
     if (!el) return;
-    let rect = el.getBoundingClientRect();
-    // If the trigger is jammed against both edges (short viewport), bring
-    // it to the middle of the page first, then measure again.
-    if (scrollIfCramped && window.innerHeight - rect.bottom < 180 && rect.top < 180) {
-      el.scrollIntoView({ block: "center", inline: "nearest" });
-      rect = el.getBoundingClientRect();
-    }
+    const rect = el.getBoundingClientRect();
     setDropdownPos(placeFilmPicker({
       trigger: { top: rect.top, bottom: rect.bottom, left: rect.left },
       viewportWidth: window.innerWidth,
@@ -115,11 +109,14 @@ function FilmPicker({
     return () => document.removeEventListener("mousedown", h);
   }, [open]);
 
-  // Place the panel when it opens. Prefer below the trigger; flip upward
-  // when the bottom of the viewport would clip it. The list scrolls inside.
+  // Measure before showing the panel so it never flashes taller than the viewport.
+  // The page itself is not scrolled; the film list scrolls inside the panel.
   useEffect(() => {
-    if (!open) return;
-    placeDropdown(true);
+    if (!open) {
+      setDropdownPos(null);
+      return;
+    }
+    placeDropdown();
     const focusTimer = setTimeout(() => inputRef.current?.focus(), 80);
     return () => clearTimeout(focusTimer);
   }, [open, placeDropdown]);
@@ -127,7 +124,7 @@ function FilmPicker({
   // Keep the panel pinned to the trigger while the page scrolls or resizes.
   useEffect(() => {
     if (!open) return;
-    const update = () => placeDropdown(false);
+    const update = () => placeDropdown();
     window.addEventListener("scroll", update, true);
     window.addEventListener("resize", update);
     return () => {
@@ -192,16 +189,19 @@ function FilmPicker({
       </div>
 
       {/* Dropdown — rendered via portal at body level, fixed positioned */}
-      {open && typeof document !== "undefined" && createPortal(
+      {open && dropdownPos && typeof document !== "undefined" && createPortal(
         <div
           ref={dropdownRef}
+          data-film-picker="open"
           style={{
             position: "fixed",
             top: dropdownPos.top,
-            bottom: dropdownPos.bottom,
             left: dropdownPos.left,
             width: dropdownPos.width,
-            maxHeight: dropdownPos.maxHeight,
+            height: dropdownPos.height,
+            boxSizing: "border-box",
+            maxWidth: "calc(100vw - 24px)",
+            maxHeight: "calc(100vh - 24px)",
             background: THEME.white,
             border: `1px solid ${THEME.border}`,
             borderRadius: 12,
@@ -214,8 +214,8 @@ function FilmPicker({
         >
           {/* Search + brand filters */}
           <div style={{ padding: "10px 12px", borderBottom: `1px solid ${THEME.border}`, flexShrink: 0 }}>
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              <div style={{ position: "relative", flex: 1 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8, minWidth: 0 }}>
+              <div style={{ position: "relative", flex: "1 1 auto", minWidth: 0 }}>
                 <svg style={{ position: "absolute", left: 10, top: 8, color: THEME.textMuted }} width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
                 </svg>
@@ -225,7 +225,7 @@ function FilmPicker({
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="Search 295 films by name…"
                   style={{
-                    width: "100%", padding: "7px 10px 7px 32px",
+                    width: "100%", boxSizing: "border-box", padding: "7px 10px 7px 32px",
                     border: `1px solid ${THEME.border}`, borderRadius: 8,
                     fontSize: 13, fontFamily: "inherit", outline: "none",
                     color: THEME.textDark,
@@ -238,6 +238,7 @@ function FilmPicker({
                 style={{
                   padding: "7px 8px", border: `1px solid ${THEME.border}`, borderRadius: 8,
                   fontSize: 12, fontFamily: "inherit", color: THEME.textDark, background: THEME.white,
+                  flex: "0 1 auto", maxWidth: 148, minWidth: 0,
                 }}
               >
                 <option value="">Auto group</option>
@@ -247,7 +248,7 @@ function FilmPicker({
               </select>
             </div>
             {/* Brand filter pills */}
-            <div style={{ display: "flex", gap: 4 }}>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <button
                 onClick={() => setBrandFilter(null)}
                 style={{
@@ -279,7 +280,7 @@ function FilmPicker({
           </div>
 
           {/* Film list — 2 columns, many rows visible, scrollable */}
-          <div style={{ overflowY: "auto", flex: "1 1 auto", minHeight: 0, padding: "4px 0" }}>
+          <div style={{ overflowX: "hidden", overflowY: "auto", overscrollBehavior: "contain", flex: "1 1 auto", minHeight: 0, minWidth: 0, padding: "4px 0" }}>
             {filtered.length === 0 && (
               <div style={{ padding: "24px", textAlign: "center", color: THEME.textMuted, fontSize: 13 }}>
                 No films found matching &quot;{q}&quot;
@@ -296,8 +297,9 @@ function FilmPicker({
                   {brand} ({films.length})
                 </div>
                 <div style={{
-                  display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-                  gap: 0, padding: "0 4px",
+                  display: "grid",
+                  gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1fr)",
+                  gap: 0, padding: "0 4px", minWidth: 0,
                 }}>
                   {films.map((f) => (
                     <div
@@ -307,7 +309,7 @@ function FilmPicker({
                         padding: "8px 10px", cursor: "pointer",
                         display: "flex", flexDirection: "column", gap: 2,
                         fontSize: 12, color: THEME.textDark,
-                        borderRadius: 6,
+                        borderRadius: 6, minWidth: 0,
                         borderBottom: `1px solid ${THEME.lightGray}`,
                         background: film?.name === f.name ? THEME.greenBg : "transparent",
                         transition: "background 0.1s",
