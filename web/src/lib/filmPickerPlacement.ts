@@ -1,4 +1,4 @@
-// Places the film picker so the entire panel is inside the viewport.
+// Places the film picker so the entire panel is inside the viewport on every open.
 // Height and width are explicit: the box cannot grow with its content.
 // The film list scrolls inside the panel. Opening the picker does not scroll the page.
 
