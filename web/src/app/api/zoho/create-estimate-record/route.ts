@@ -294,10 +294,10 @@ export async function POST(request: NextRequest) {
     // on the Deal in submit-pricing/route.ts) — populates Books' own
     // "Installation Address" custom field so it's never blank/"null null
     // null" on the generated estimate.
-    // Salesperson follows the logged-in user. Katie is matched to the Books
-    // salesperson with her CRM email (or ZOHO_BOOKS_SALESPERSON_ID_KATIE).
-    // Other reps keep the previous behavior: the estimate is labeled with
-    // their display name.
+    // Salesperson follows the logged-in user. Katie and Amy are matched to
+    // the Books salesperson with their CRM email (or
+    // ZOHO_BOOKS_SALESPERSON_ID_<LOGIN>). Other reps keep the previous
+    // behavior: the estimate is labeled with their display name.
     const sessionUserId = await getSessionUserId();
     const sessionUser = sessionUserId ? findUserById(sessionUserId) : null;
     let salespersonName = sessionUser?.name || body.userName;

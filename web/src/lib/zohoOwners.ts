@@ -73,7 +73,7 @@ export async function resolveDealOwner(
       lookupError = e instanceof Error ? e.message : String(e);
     }
     if (lookedUp) return { id: lookedUp, source: "email" };
-    // Confirmed stored id (Katie) still owns the deal when users.READ is missing.
+    // Confirmed stored id (Katie, Amy) still owns the deal when users.READ is missing.
     if (user.zohoUserId) return { id: user.zohoUserId, source: "stored" };
 
     const key = crmUserIdEnvKey(user.id);
