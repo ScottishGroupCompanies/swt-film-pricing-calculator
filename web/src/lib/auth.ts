@@ -24,19 +24,18 @@ function hash(password: string): string {
   return createHash("sha256").update(password).digest("hex");
 }
 
-// Passwords: everyone starts on a shared placeholder "0000" except Jenny,
-// who gets her own "1111" — per Jenny's explicit instruction, to be changed
-// per-person later. Real Zoho user IDs pulled from the Deals.Owner field
-// on existing production Deals (see session notes — CRM org 848141664).
+// Passwords: everyone starts on a shared placeholder "0000" except Jenny
+// ("1111") and Katie ("0701"). Real Zoho user IDs pulled from the Deals.Owner
+// field on existing production Deals (see session notes — CRM org 848141664).
 export const SERVER_USERS: ServerUser[] = [
   { id: "dana",  name: "Dana",  loc: "Colorado",  glassRate: 0,    filmRate: 0.07, passwordHash: hash("0000"), zohoUserId: "6168763000003575014" },
   { id: "amy",   name: "Amy",   loc: "Texas",     glassRate: 0,    filmRate: 0.05, passwordHash: hash("0000"), zohoUserId: "6168763000003573001" },
   { id: "blake", name: "Blake", loc: "KS/MO",     glassRate: null, filmRate: 0.15, passwordHash: hash("0000"), zohoUserId: "6168763000003575012" },
-  // PIN 0000. zohoUserId confirmed from Zoho CRM Setup → Users → Katie
+  // PIN 0701. zohoUserId confirmed from Zoho CRM Setup → Users → Katie
   // (org 848141664, the id in the user URL). It is the owner when the
   // katie@scottishwindowtinting.com lookup cannot run. ZOHO_CRM_USER_ID_KATIE
   // still overrides it.
-  { id: "katie", name: "Katie", loc: "Arizona",   glassRate: null, filmRate: 0,    passwordHash: hash("0000"), zohoEmail: "katie@scottishwindowtinting.com", zohoUserId: "6168763000002178001" },
+  { id: "katie", name: "Katie", loc: "Arizona",   glassRate: null, filmRate: 0,    passwordHash: hash("0701"), zohoEmail: "katie@scottishwindowtinting.com", zohoUserId: "6168763000002178001" },
   { id: "mike",  name: "Mike",  loc: "Tennessee", glassRate: null, filmRate: 0,    passwordHash: hash("0000"), zohoUserId: "6168763000003583005" },
   { id: "jenny", name: "Jenny", loc: "Colorado",  glassRate: null, filmRate: 0.05, passwordHash: hash("1111"), zohoUserId: "6168763000038970001" },
   // Admin test account — used to check whether logging estimates/deals in
