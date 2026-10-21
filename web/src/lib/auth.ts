@@ -25,11 +25,14 @@ function hash(password: string): string {
 }
 
 // Passwords: everyone starts on a shared placeholder "0000" except Jenny
-// ("1111") and Katie ("0701"). Real Zoho user IDs pulled from the Deals.Owner
-// field on existing production Deals (see session notes — CRM org 848141664).
+// ("1111"), Katie ("0701"), and Amy ("4321"). Real Zoho user IDs pulled from
+// the Deals.Owner field on existing production Deals (CRM org 848141664).
 export const SERVER_USERS: ServerUser[] = [
   { id: "dana",  name: "Dana",  loc: "Colorado",  glassRate: 0,    filmRate: 0.07, passwordHash: hash("0000"), zohoUserId: "6168763000003575014" },
-  { id: "amy",   name: "Amy",   loc: "Texas",     glassRate: 0,    filmRate: 0.05, passwordHash: hash("0000"), zohoUserId: "6168763000003573001" },
+  // PIN 4321. zohoUserId confirmed for Amy in Zoho CRM org 848141664.
+  // Quotes look up amy@scottishwindowtinting.com first. This id is the owner
+  // when that lookup cannot run. ZOHO_CRM_USER_ID_AMY still overrides it.
+  { id: "amy",   name: "Amy",   loc: "Texas",     glassRate: 0,    filmRate: 0.05, passwordHash: hash("4321"), zohoEmail: "amy@scottishwindowtinting.com", zohoUserId: "6168763000003573001" },
   { id: "blake", name: "Blake", loc: "KS/MO",     glassRate: null, filmRate: 0.15, passwordHash: hash("0000"), zohoUserId: "6168763000003575012" },
   // PIN 0701. zohoUserId confirmed from Zoho CRM Setup → Users → Katie
   // (org 848141664, the id in the user URL). It is the owner when the
