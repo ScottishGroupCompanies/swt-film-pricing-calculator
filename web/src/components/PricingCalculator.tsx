@@ -14,7 +14,7 @@ import {
   type AdditionalCharge, type AdditionalChargeKind,
 } from "@/lib/additionalCharges";
 import { placeFilmPicker, type FilmPickerPlacement } from "@/lib/filmPickerPlacement";
-import { quoteAdjustments } from "@/lib/bulkFilmDiscount";
+import { BULK_FILM_DISCOUNT_LABEL, formatDiscountPercent, quoteAdjustments } from "@/lib/bulkFilmDiscount";
 import {
   buildCustomerProposal, buildInternalRecord, buildPrintableHTML,
   downloadFile, printHTML, type ProposalData, type ProposalLine,
@@ -744,6 +744,8 @@ interface SavedDraft {
   deposit: string;
   installOnly?: boolean;
   additionalCharges?: AdditionalCharge[];
+  /** Workbook checkbox for the bulk film discount. Missing drafts stay on. */
+  bulkDiscountEnabled?: boolean;
 }
 
 function readDraft(): { draft: SavedDraft; savedAt: number } | null {
@@ -860,7 +862,8 @@ export default function PricingCalculator() {
   const [feePct, setFeePct] = useState<string>(String(DEFAULT_FEE_PCT));
   const [deposit, setDeposit] = useState<string>("");
   const [installOnly, setInstallOnly] = useState(false);
-  const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]); 
+  const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
+  const [bulkDiscountEnabled, setBulkDiscountEnabled] = useState(true); 
 
   const updateRow = useCallback((id: number, field: keyof RowData, val: string | Film | number | null) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: val } : r)));
@@ -915,6 +918,7 @@ export default function PricingCalculator() {
     setDeposit(saved.deposit);
     setInstallOnly(saved.installOnly === true);
     setAdditionalCharges(Array.isArray(saved.additionalCharges) ? saved.additionalCharges : []);
+    setBulkDiscountEnabled(saved.bulkDiscountEnabled !== false);
     setDraftRestoredAt(Date.now());
     setDraftPrompt(null);
     // Release the guard on the next tick, after all the setters above
@@ -949,7 +953,7 @@ export default function PricingCalculator() {
         contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
         opportunityName, opportunityNameTouched, minDim, rows,
         chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
-        installOnly, additionalCharges,
+        installOnly, additionalCharges, bulkDiscountEnabled,
       };
       try {
         window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ draft, savedAt: Date.now() }));
@@ -964,7 +968,7 @@ export default function PricingCalculator() {
     contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
     opportunityName, opportunityNameTouched, minDim, rows,
     chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
-    installOnly, additionalCharges,
+    installOnly, additionalCharges, bulkDiscountEnabled,
     draftPrompt,
   ]);
 
@@ -1026,8 +1030,9 @@ export default function PricingCalculator() {
     const commRate = user ? getCommRate(user) : null;
     const adjustments = quoteAdjustments({
       filmTotal,
-      chargedSqFt: totalCharged,
+      highestPg,
       installOnly,
+      bulkDiscountEnabled,
       discountEnabled,
       discountPct: discountPct ? parseFloat(discountPct) || 0 : 0,
       attachmentOther: attachmentOther ? parseFloat(attachmentOther) || 0 : 0,
@@ -1050,6 +1055,7 @@ export default function PricingCalculator() {
       discountPctNum: adjustments.discountPctNum,
       discount: adjustments.discount,
       bulkDiscount: adjustments.bulkDiscount,
+      bulkDiscountRate: adjustments.bulkDiscountRate,
       bulkDiscountLabel: adjustments.bulkDiscountLabel,
       additionalChargeLines: pricedAdditionalCharges(additionalCharges),
       attachmentOtherAmt: attachmentOther ? parseFloat(attachmentOther) || 0 : 0,
@@ -1060,7 +1066,7 @@ export default function PricingCalculator() {
       depositAmt: adjustments.depositAmt,
       balanceDue: adjustments.balanceDue,
     };
-  }, [lineCalcs, user, chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit, installOnly, additionalCharges]);
+  }, [lineCalcs, user, chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit, installOnly, additionalCharges, bulkDiscountEnabled]);
 
   const proposalData = useMemo<ProposalData | null>(() => {
     if (!totals.total) return null;
@@ -1191,6 +1197,7 @@ export default function PricingCalculator() {
     setDeposit("");
     setInstallOnly(false);
     setAdditionalCharges([]);
+    setBulkDiscountEnabled(true);
     clearDraft();
     setDraftRestoredAt(null);
   }
@@ -1331,23 +1338,6 @@ export default function PricingCalculator() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: "wrap" }}>
-          {/* Min dim */}
-          {!isMobile && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Min dim</span>
-              <input
-                type="number" value={minDim} min={1} step={0.5}
-                onChange={(e) => setMinDim(parseFloat(e.target.value) || MIN_DIM_DEFAULT)}
-                style={{
-                  width: 52, padding: "4px 8px",
-                  background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 6, color: "#fff", fontSize: 12, fontFamily: "inherit", textAlign: "center",
-                }}
-              />
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>&quot;</span>
-            </div>
-          )}
-
           {/* Signed-in user (read-only — no switching) */}
           <CurrentUserBadge user={user} onLogout={handleLogout} />
         </div>
@@ -2176,12 +2166,30 @@ export default function PricingCalculator() {
                   </div>
                 )}
 
+                {!installOnly && (
+                  <label style={{
+                    fontSize: 11, color: THEME.textMuted, fontWeight: 500,
+                    display: "flex", alignItems: "center", gap: 6, margin: "8px 0 4px", cursor: "pointer",
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={bulkDiscountEnabled}
+                      onChange={(e) => setBulkDiscountEnabled(e.target.checked)}
+                      style={{ cursor: "pointer" }}
+                    />
+                    {BULK_FILM_DISCOUNT_LABEL}
+                  </label>
+                )}
+
                 {totals.bulkDiscount > 0 && (
                   <div style={{
                     display: "flex", justifyContent: "space-between",
                     padding: "3px 0", fontSize: 12, color: "#e04d46",
                   }}>
-                    <span>{totals.bulkDiscountLabel || "Bulk film discount"}</span>
+                    <span>
+                      {BULK_FILM_DISCOUNT_LABEL}
+                      {totals.bulkDiscountRate > 0 ? ` (${formatDiscountPercent(totals.bulkDiscountRate)})` : ""}
+                    </span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>−{fmt$(totals.bulkDiscount)}</span>
                   </div>
                 )}

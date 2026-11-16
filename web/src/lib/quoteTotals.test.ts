@@ -5,8 +5,9 @@ import { getOverUnderComm } from "./pricingData.ts";
 
 const base = {
   filmTotal: 1000,
-  chargedSqFt: 2000,
+  highestPg: 2,
   installOnly: false,
+  bulkDiscountEnabled: true,
   discountEnabled: false,
   discountPct: 0,
   attachmentOther: 0,
@@ -36,23 +37,35 @@ test("additional charges are in the total and the fee base", () => {
 test("install-only skips bulk film discount and still prices the fee on labor", () => {
   const totals = quoteAdjustments({
     ...base,
+    filmTotal: 3000,
+    highestPg: 8,
     installOnly: true,
-    bulkConfig: { enabled: true, tiers: [{ minChargedSqFt: 100, rate: 0.1 }] },
   });
   assert.equal(totals.bulkDiscount, 0);
-  assert.equal(totals.totalCost, 1040);
+  assert.equal(totals.subtotalAfterDiscount, 3000);
+  assert.equal(totals.feeAmount, 120);
+  assert.equal(totals.totalCost, 3120);
 });
 
-test("an enabled bulk tier reduces the film total before the fee", () => {
+test("the workbook rate comes off the film total before the fee", () => {
+  const totals = quoteAdjustments({ ...base, filmTotal: 1500, highestPg: 7 });
+  assert.equal(totals.bulkDiscount, 30);
+  assert.equal(totals.bulkDiscountLabel, "Bulk film discount");
+  assert.equal(totals.subtotalAfterDiscount, 1470);
+  assert.equal(Math.round(totals.feeAmount * 100) / 100, 58.8);
+  assert.equal(Math.round(totals.totalCost * 100) / 100, 1528.8);
+  assert.equal(totals.baseCommission, 147);
+});
+
+test("unchecking the bulk discount leaves the film total intact", () => {
   const totals = quoteAdjustments({
     ...base,
-    bulkConfig: { enabled: true, tiers: [{ minChargedSqFt: 1000, rate: 0.1 }] },
+    filmTotal: 3000,
+    highestPg: 7,
+    bulkDiscountEnabled: false,
   });
-  assert.equal(totals.bulkDiscount, 100);
-  assert.equal(totals.bulkDiscountLabel, "10% bulk film discount");
-  assert.equal(totals.subtotalAfterDiscount, 900);
-  assert.equal(totals.feeAmount, 36);
-  assert.equal(totals.totalCost, 936);
+  assert.equal(totals.bulkDiscount, 0);
+  assert.equal(totals.totalCost, 3120);
 });
 
 test("over/under commission matches the Film Commission sheet helper", () => {

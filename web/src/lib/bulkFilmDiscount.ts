@@ -1,89 +1,70 @@
 /**
- * Bulk film discount.
+ * Bulk film discount from the pricing workbook.
  *
- * The tiers below are the only place this discount is defined. They are
- * empty and the switch is off because the repository does not contain a
- * film volume-discount schedule that can be applied without guessing.
+ * Jenny's V-10.9 workbook (2026-07-31) stores this table at
+ * Preferences D46:R56. Film Pricing K47 looks it up with:
+ *   IF(K45>0, IF(I47="✓", HLOOKUP(K45, Preferences!F46:R56, M46+1, TRUE) * K45 * -1, 0), 0)
+ * K45 is the film total in dollars, M46 is the highest pricing group,
+ * and I47 is the checkbox (default checked). The sheet labels that row "Other".
  *
- * What was searched (V-10.9 price list in pricingData.ts, docs/, git
- * history, and data/ScottishPricing-26_12-Accounts.xlsm):
+ * The copy in this repo, data/ScottishPricing-26_12-Accounts.xlsm, has the
+ * same thresholds and rates 12 rows higher, at Preferences!F34:R44, and
+ * Film Pricing!K47 points there. Blank cells are 0. Column H ($1,000) is
+ * blank for groups 1–7. Groups 8–10 are blank from $500 through $2,500.
  *
- * - Film Pricing / Film Pricing Customer / Film Commission have no bulk,
- *   volume, or quantity-break discount. Line price is charged square feet
- *   times the pricing-group $/SF (Price_Group).
- * - Preferences!F34:R44 is the commission-rate table (job-total columns,
- *   pricing-group rows). Film Pricing!K47 uses it only when checkbox I47
- *   is on, as a negative "Other" amount:
- *   HLOOKUP(film total, Preferences!F34:R44, max pricing group + 1) * film
- *   total * -1. The line label becomes "Other". The app already replaced
- *   that checkbox with the manual Discount % and the Attachment/Other
- *   dollar field. Those rates are commission, not a customer film discount.
- *   V-10.9 commission in this app is a flat rate per rep, not that table.
- * - Preferences!A6:B13 ("Cost Per Sq. Ft.", 0 / 7.01 / 15.01 / 20.01 /
- *   25.01 / 28.01 / 32.01 sq ft → $220 / $240 / $270 / $300 / $340 / $420 /
- *   $700) is used by the Window Pricing sheet, and the price goes up with
- *   size. It is not a film discount.
- * - Replacement Windows has a note, "10% discount for 3 or more windows".
- *   That sheet is replacement windows, not film.
- * - Restoration has a "Lift rental discount" label and no film tiers.
+ * Commission in this app stays a flat rate per rep. This table is only
+ * the customer bulk discount.
  *
- * To turn this on after Jenny confirms a schedule, set `enabled` to true
- * and add tiers. The highest tier whose `minChargedSqFt` is less than or
- * equal to the job's charged square feet wins. `rate` is a fraction of
- * the film total after the $250 minimum (0.1 = 10%). Install-only quotes
- * do not call this — the customer is not buying film.
+ * HLOOKUP approximate match: the greatest threshold less than or equal
+ * to the film total. Pricing group 0, or anything outside 1–10, is no discount.
  */
 
-export interface BulkFilmDiscountTier {
-  /** Inclusive minimum charged square feet. */
-  minChargedSqFt: number;
-  /** Fraction of the film total. 0.1 means 10%. */
-  rate: number;
-}
+export const BULK_FILM_DISCOUNT_LABEL = "Bulk film discount";
 
-export interface BulkFilmDiscountConfig {
-  /** Off, or an empty tier list, applies no discount. */
-  enabled: boolean;
-  tiers: BulkFilmDiscountTier[];
-}
+/** Film-total dollar thresholds. Header row of the workbook table. */
+export const BULK_FILM_THRESHOLDS = [0, 500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 7500, 10000, 20000, 50000] as const;
 
-export const BULK_FILM_DISCOUNT: BulkFilmDiscountConfig = {
-  enabled: false,
-  tiers: [],
-};
+/** Groups 1–7. Blank workbook cells are 0. */
+export const BULK_FILM_RATES_GROUPS_1_TO_7 = [0, 0, 0, 0.02, 0.05, 0.07, 0.09, 0.12, 0.14, 0.15, 0.16, 0.17, 0.17] as const;
+
+/** Groups 8–10. 0 below $3,000. */
+export const BULK_FILM_RATES_GROUPS_8_TO_10 = [0, 0, 0, 0, 0, 0, 0.02, 0.04, 0.06, 0.07, 0.08, 0.09, 0.10] as const;
 
 export interface BulkFilmDiscountResult {
   amount: number;
   rate: number;
-  /** Customer-facing label, empty when no discount applies. */
+  /** "Bulk film discount" when a discount applies, otherwise empty. */
   label: string;
+}
+
+export function bulkFilmRate(highestPg: number, filmTotal: number): number {
+  if (!(filmTotal > 0) || !(highestPg >= 1)) return 0;
+  const rates = highestPg <= 7
+    ? BULK_FILM_RATES_GROUPS_1_TO_7
+    : highestPg <= 10
+      ? BULK_FILM_RATES_GROUPS_8_TO_10
+      : null;
+  if (!rates) return 0;
+  let index = 0;
+  for (let i = 0; i < BULK_FILM_THRESHOLDS.length; i++) {
+    if (filmTotal >= BULK_FILM_THRESHOLDS[i]) index = i;
+  }
+  return rates[index] ?? 0;
 }
 
 export function bulkFilmDiscount(input: {
   filmTotal: number;
-  chargedSqFt: number;
-  config?: BulkFilmDiscountConfig;
+  highestPg: number;
+  /** Workbook checkbox I47. Defaults on. */
+  enabled?: boolean;
 }): BulkFilmDiscountResult {
-  const config = input.config ?? BULK_FILM_DISCOUNT;
   const none: BulkFilmDiscountResult = { amount: 0, rate: 0, label: "" };
-  if (!config.enabled || config.tiers.length === 0) return none;
-  if (!(input.filmTotal > 0) || !(input.chargedSqFt > 0)) return none;
-
-  const tier = config.tiers.reduce<BulkFilmDiscountTier | null>((best, candidate) => {
-    if (!(candidate.minChargedSqFt >= 0) || !(candidate.rate > 0)) return best;
-    if (input.chargedSqFt + 1e-9 < candidate.minChargedSqFt) return best;
-    if (!best || candidate.minChargedSqFt >= best.minChargedSqFt) return candidate;
-    return best;
-  }, null);
-  if (!tier) return none;
-
-  const amount = Math.round((input.filmTotal * tier.rate + Number.EPSILON) * 100) / 100;
+  if (input.enabled === false) return none;
+  const rate = bulkFilmRate(input.highestPg, input.filmTotal);
+  if (!(rate > 0)) return none;
+  const amount = Math.round((input.filmTotal * rate + Number.EPSILON) * 100) / 100;
   if (!(amount > 0)) return none;
-  return {
-    amount,
-    rate: tier.rate,
-    label: `${formatDiscountPercent(tier.rate)} bulk film discount`,
-  };
+  return { amount, rate, label: BULK_FILM_DISCOUNT_LABEL };
 }
 
 export function formatDiscountPercent(rate: number): string {
@@ -105,8 +86,10 @@ export function formatDiscountPercent(rate: number): string {
  */
 export function quoteAdjustments(input: {
   filmTotal: number;
-  chargedSqFt: number;
+  highestPg: number;
   installOnly: boolean;
+  /** Rep toggle, same as workbook checkbox I47. Defaults on. */
+  bulkDiscountEnabled?: boolean;
   discountEnabled: boolean;
   discountPct: number;
   attachmentOther: number;
@@ -115,7 +98,6 @@ export function quoteAdjustments(input: {
   deposit: number;
   commRate: number | null;
   chargedToClient: number | null;
-  bulkConfig?: BulkFilmDiscountConfig;
 }): {
   bulkDiscount: number;
   bulkDiscountRate: number;
@@ -139,8 +121,8 @@ export function quoteAdjustments(input: {
     ? { amount: 0, rate: 0, label: "" }
     : bulkFilmDiscount({
         filmTotal,
-        chargedSqFt: input.chargedSqFt,
-        config: input.bulkConfig,
+        highestPg: input.highestPg,
+        enabled: input.bulkDiscountEnabled !== false,
       });
   const discountPctNum = input.discountEnabled && Number.isFinite(input.discountPct) ? input.discountPct : 0;
   const discount = filmTotal * (discountPctNum / 100);
