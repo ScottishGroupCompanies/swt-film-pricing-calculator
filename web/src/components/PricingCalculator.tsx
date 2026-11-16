@@ -5,11 +5,16 @@ import { useRouter } from "next/navigation";
 import {
   PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT,
   FILMS, BRANDS, BRAND_COLORS,
-  fmt$, fmtSF, getCommRate, getOverUnderComm, calcRowGeometry, newRow, initials,
+  fmt$, fmtSF, getCommRate, calcRowGeometry, newRow, initials,
   type User, type Film, type RowData, type RowCalc,
 } from "@/lib/pricingData";
 import { parseCityStateZip } from "@/lib/address";
+import {
+  ADDITIONAL_CHARGE_DEFAULTS, ADDITIONAL_CHARGE_LABELS, pricedAdditionalCharges, sumAdditionalCharges,
+  type AdditionalCharge, type AdditionalChargeKind,
+} from "@/lib/additionalCharges";
 import { placeFilmPicker, type FilmPickerPlacement } from "@/lib/filmPickerPlacement";
+import { quoteAdjustments } from "@/lib/bulkFilmDiscount";
 import {
   buildCustomerProposal, buildInternalRecord, buildPrintableHTML,
   downloadFile, printHTML, type ProposalData, type ProposalLine,
@@ -737,6 +742,8 @@ interface SavedDraft {
   attachmentOther: string;
   feePct: string;
   deposit: string;
+  installOnly?: boolean;
+  additionalCharges?: AdditionalCharge[];
 }
 
 function readDraft(): { draft: SavedDraft; savedAt: number } | null {
@@ -851,7 +858,9 @@ export default function PricingCalculator() {
   const [discountPct, setDiscountPct] = useState<string>("");
   const [attachmentOther, setAttachmentOther] = useState<string>(""); // flat $ adjustment (e.g. "Other" line on the Film Commission sheet) — applied before the fee
   const [feePct, setFeePct] = useState<string>(String(DEFAULT_FEE_PCT));
-  const [deposit, setDeposit] = useState<string>(""); 
+  const [deposit, setDeposit] = useState<string>("");
+  const [installOnly, setInstallOnly] = useState(false);
+  const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]); 
 
   const updateRow = useCallback((id: number, field: keyof RowData, val: string | Film | number | null) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: val } : r)));
@@ -904,6 +913,8 @@ export default function PricingCalculator() {
     setAttachmentOther(saved.attachmentOther);
     setFeePct(saved.feePct);
     setDeposit(saved.deposit);
+    setInstallOnly(saved.installOnly === true);
+    setAdditionalCharges(Array.isArray(saved.additionalCharges) ? saved.additionalCharges : []);
     setDraftRestoredAt(Date.now());
     setDraftPrompt(null);
     // Release the guard on the next tick, after all the setters above
@@ -938,6 +949,7 @@ export default function PricingCalculator() {
         contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
         opportunityName, opportunityNameTouched, minDim, rows,
         chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
+        installOnly, additionalCharges,
       };
       try {
         window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ draft, savedAt: Date.now() }));
@@ -952,6 +964,7 @@ export default function PricingCalculator() {
     contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
     opportunityName, opportunityNameTouched, minDim, rows,
     chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
+    installOnly, additionalCharges,
     draftPrompt,
   ]);
 
@@ -1006,42 +1019,48 @@ export default function PricingCalculator() {
     const total = rawTotal != null ? Math.max(rawTotal, MIN_PRICE) : null;
     const minAdj = total != null && rawTotal != null && total > rawTotal ? total - rawTotal : 0;
 
-    // Editable post-calculation summary: Film Total -> Discount -> Attachment/Other -> Subtotal -> Fees -> Total Cost -> Deposit -> Balance Due
+    // Film total (after the $250 minimum) → bulk film discount → manual
+    // discount % → attachment/other and additional charges → fee.
+    // Install only uses this same film total as labor. No material is added.
     const filmTotal = total ?? 0;
-    // Discount is entered as a % of the Film Total (applied before the fee).
-    const discountPctNum = discountEnabled && discountPct ? parseFloat(discountPct) || 0 : 0;
-    const discount = filmTotal * (discountPctNum / 100);
-    // Attachment/Other is a flat $ adjustment (matches the "Other" line on the
-    // Film Commission sheet) — applied after the discount, before the fee.
-    // Enter a negative number for a deduction (e.g. -1904.17), positive for an add-on.
-    const attachmentOtherAmt = attachmentOther ? parseFloat(attachmentOther) || 0 : 0;
-    const subtotalAfterDiscount = Math.max(0, filmTotal - discount + attachmentOtherAmt);
-    const feePctNum = feePct ? parseFloat(feePct) || 0 : 0;
-    const feeAmount = subtotalAfterDiscount * (feePctNum / 100);
-    const totalCost = subtotalAfterDiscount + feeAmount;
-    const depositAmt = deposit ? parseFloat(deposit) || 0 : 0;
-    const balanceDue = totalCost - depositAmt;
-
-    // Commission — matches the Film Commission sheet exactly:
-    //   Base commission = user's rate x Subtotal (Film Total after discount + Attachment/Other, before the fee)
-    //   Difference = Charged to Client - Total Cost
-    //   If Difference > 0 (overcharged the client): Over/Under = Difference x the user's own commission rate
-    //   If Difference <= 0 (undercharged / a loss): Over/Under = Difference x 0.5 (a 50/50 split of the loss with the company)
-    //   Total Commission = Base + Over/Under
     const commRate = user ? getCommRate(user) : null;
-    const baseCommission = commRate != null ? subtotalAfterDiscount * commRate : null;
-
-    const charged = chargedToClient ? parseFloat(chargedToClient) : null;
-    const difference = charged != null ? charged - totalCost : 0;
-    const overUnderComm = getOverUnderComm(difference, commRate);
-    const totalCommission = baseCommission != null ? baseCommission + overUnderComm : null;
+    const adjustments = quoteAdjustments({
+      filmTotal,
+      chargedSqFt: totalCharged,
+      installOnly,
+      discountEnabled,
+      discountPct: discountPct ? parseFloat(discountPct) || 0 : 0,
+      attachmentOther: attachmentOther ? parseFloat(attachmentOther) || 0 : 0,
+      additionalCharges: sumAdditionalCharges(additionalCharges),
+      feePct: feePct ? parseFloat(feePct) || 0 : 0,
+      deposit: deposit ? parseFloat(deposit) || 0 : 0,
+      commRate,
+      chargedToClient: chargedToClient ? parseFloat(chargedToClient) : null,
+    });
 
     return {
       totalActual, totalCharged, totalPrice, winCount, highestPg, rawTotal, total, minAdj,
-      commRate, baseCommission, charged, difference, overUnderComm, totalCommission,
-      filmTotal, discountPctNum, discount, attachmentOtherAmt, subtotalAfterDiscount, feePctNum, feeAmount, totalCost, depositAmt, balanceDue,
+      commRate,
+      baseCommission: adjustments.baseCommission,
+      charged: chargedToClient ? parseFloat(chargedToClient) : null,
+      difference: adjustments.difference,
+      overUnderComm: adjustments.overUnderComm,
+      totalCommission: adjustments.totalCommission,
+      filmTotal,
+      discountPctNum: adjustments.discountPctNum,
+      discount: adjustments.discount,
+      bulkDiscount: adjustments.bulkDiscount,
+      bulkDiscountLabel: adjustments.bulkDiscountLabel,
+      additionalChargeLines: pricedAdditionalCharges(additionalCharges),
+      attachmentOtherAmt: attachmentOther ? parseFloat(attachmentOther) || 0 : 0,
+      subtotalAfterDiscount: adjustments.subtotalAfterDiscount,
+      feePctNum: adjustments.feePctNum,
+      feeAmount: adjustments.feeAmount,
+      totalCost: adjustments.totalCost,
+      depositAmt: adjustments.depositAmt,
+      balanceDue: adjustments.balanceDue,
     };
-  }, [lineCalcs, user, chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit]);
+  }, [lineCalcs, user, chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit, installOnly, additionalCharges]);
 
   const proposalData = useMemo<ProposalData | null>(() => {
     if (!totals.total) return null;
@@ -1085,6 +1104,10 @@ export default function PricingCalculator() {
       minDim,
       // Editable summary breakdown
       discount: totals.discount,
+      bulkDiscount: totals.bulkDiscount,
+      bulkDiscountLabel: totals.bulkDiscountLabel,
+      additionalCharges: totals.additionalChargeLines,
+      installOnly,
       attachmentOther: totals.attachmentOtherAmt,
       subtotalAfterDiscount: totals.subtotalAfterDiscount,
       feePct: totals.feePctNum,
@@ -1110,7 +1133,7 @@ export default function PricingCalculator() {
     rows, lineCalcs, totals, customer, address, cityStateZip, phone, email, user, minDim,
     jobType, companyName, companyAddress, companyCityStateZip, companyPhone, companyEmail,
     contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
-    effectiveOpportunityName,
+    effectiveOpportunityName, installOnly,
   ]);
 
   function handlePrint() {
@@ -1166,6 +1189,8 @@ export default function PricingCalculator() {
     setAttachmentOther("");
     setFeePct(String(DEFAULT_FEE_PCT));
     setDeposit("");
+    setInstallOnly(false);
+    setAdditionalCharges([]);
     clearDraft();
     setDraftRestoredAt(null);
   }
@@ -1237,6 +1262,10 @@ export default function PricingCalculator() {
           feePct: proposalData.feePct,
           minAdj: proposalData.minAdj,
           totalCost: proposalData.totalCost,
+          installOnly: proposalData.installOnly,
+          bulkDiscount: proposalData.bulkDiscount,
+          bulkDiscountLabel: proposalData.bulkDiscountLabel,
+          additionalCharges: proposalData.additionalCharges,
           lines: proposalData.lines,
         }),
       });
@@ -1415,6 +1444,26 @@ export default function PricingCalculator() {
                 </button>
               ))}
             </div>
+
+            <button
+              type="button"
+              onClick={() => setInstallOnly((on) => !on)}
+              style={{
+                width: "100%", marginBottom: 12, padding: isMobile ? "10px 10px" : "8px 14px", borderRadius: 8,
+                border: `1.5px solid ${installOnly ? THEME.green : THEME.border}`,
+                background: installOnly ? THEME.greenBg : THEME.white,
+                color: installOnly ? THEME.greenDark : THEME.textMuted,
+                fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                textAlign: "left",
+              }}
+            >
+              {installOnly ? "Install only — customer supplies the film" : "Supply and install (includes film)"}
+            </button>
+            {installOnly && (
+              <p style={{ fontSize: 12, color: THEME.textMuted, margin: "0 0 12px" }}>
+                Film material is $0. Installation labor uses the same $/SF this calculator already charges for the selected film. No separate film labor rate is on file.
+              </p>
+            )}
 
             <div style={{ marginBottom: 12 }}>
               <ContactSearchPicker
@@ -1639,7 +1688,9 @@ export default function PricingCalculator() {
             <div style={{ padding: "20px 24px 12px" }}>
               <p style={{ ...labelSt, marginBottom: 4 }}>Window Line Items</p>
               <p style={{ fontSize: 12, color: THEME.textMuted, marginBottom: 0 }}>
-                Each row can use a different film. Enter width, height, and quantity to calculate pricing.
+                {installOnly
+                  ? "Install only. Select the film the customer is supplying so labor uses that film's $/SF. Film material is not charged."
+                  : "Each row can use a different film. Enter width, height, and quantity to calculate pricing."}
               </p>
             </div>
 
@@ -2054,7 +2105,7 @@ export default function PricingCalculator() {
                   fontSize: 15, fontWeight: 600, color: THEME.darkGray,
                   fontFamily: "var(--font-cormorant), serif",
                 }}>
-                  Film Total
+                  {installOnly ? "Labor total" : "Film Total"}
                 </span>
                 <span style={{
                   fontSize: 22, fontWeight: 700, color: THEME.greenDark,
@@ -2115,6 +2166,26 @@ export default function PricingCalculator() {
                   </div>
                 </div>
 
+                {installOnly && (
+                  <div style={{
+                    display: "flex", justifyContent: "space-between",
+                    padding: "3px 0", fontSize: 12, color: THEME.textMuted,
+                  }}>
+                    <span>Film material</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt$(0)}</span>
+                  </div>
+                )}
+
+                {totals.bulkDiscount > 0 && (
+                  <div style={{
+                    display: "flex", justifyContent: "space-between",
+                    padding: "3px 0", fontSize: 12, color: "#e04d46",
+                  }}>
+                    <span>{totals.bulkDiscountLabel || "Bulk film discount"}</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>−{fmt$(totals.bulkDiscount)}</span>
+                  </div>
+                )}
+
                 {discountEnabled && totals.discount > 0 && (
                   <div style={{
                     display: "flex", justifyContent: "space-between",
@@ -2124,6 +2195,90 @@ export default function PricingCalculator() {
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>−{fmt$(totals.discount)}</span>
                   </div>
                 )}
+
+                <div style={{ margin: "8px 0 10px" }}>
+                  <div style={{
+                    fontSize: 11, color: THEME.textMuted, fontWeight: 500, marginBottom: 6,
+                  }}>
+                    Additional charges
+                  </div>
+                  {additionalCharges.map((charge) => (
+                    <div key={charge.id} style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: THEME.darkGray }}>
+                          {ADDITIONAL_CHARGE_LABELS[charge.kind]}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setAdditionalCharges((prev) => prev.filter((item) => item.id !== charge.id))}
+                          style={{
+                            border: "none", background: "transparent", color: THEME.textMuted,
+                            fontSize: 11, cursor: "pointer", fontFamily: "inherit", padding: 0,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <input
+                        value={charge.description}
+                        onChange={(e) => setAdditionalCharges((prev) => prev.map((item) => item.id === charge.id ? { ...item, description: e.target.value } : item))}
+                        placeholder={charge.kind === "other" ? "Description" : ADDITIONAL_CHARGE_DEFAULTS[charge.kind]}
+                        style={{
+                          width: "100%", padding: "7px 10px",
+                          border: `1px solid ${THEME.border}`, borderRadius: 6,
+                          background: THEME.white, color: THEME.textDark,
+                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                        }}
+                      />
+                      <input
+                        type="number"
+                        value={charge.amount}
+                        onChange={(e) => setAdditionalCharges((prev) => prev.map((item) => item.id === charge.id ? { ...item, amount: e.target.value } : item))}
+                        placeholder="0.00"
+                        step={0.01}
+                        style={{
+                          width: "100%", padding: "7px 10px",
+                          border: `1px solid ${THEME.border}`, borderRadius: 6,
+                          background: THEME.white, color: THEME.textDark,
+                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      />
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {(["equipment", "travel", "other"] as AdditionalChargeKind[]).map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        onClick={() => setAdditionalCharges((prev) => [...prev, {
+                          id: `charge-${Date.now()}-${prev.length}`,
+                          kind,
+                          description: ADDITIONAL_CHARGE_DEFAULTS[kind],
+                          amount: "",
+                        }])}
+                        style={{
+                          padding: "5px 8px", background: THEME.white,
+                          border: `1px solid ${THEME.border}`, borderRadius: 6,
+                          fontSize: 11, fontWeight: 500, cursor: "pointer",
+                          fontFamily: "inherit", color: THEME.darkGray,
+                        }}
+                      >
+                        + {ADDITIONAL_CHARGE_LABELS[kind]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {totals.additionalChargeLines.map((charge, index) => (
+                  <div key={`${charge.name}-${index}`} style={{
+                    display: "flex", justifyContent: "space-between",
+                    padding: "3px 0", fontSize: 12, color: THEME.textMuted,
+                  }}>
+                    <span>{charge.name}{charge.description && charge.description !== charge.name ? `: ${charge.description}` : ""}</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{charge.amount >= 0 ? "+" : "−"}{fmt$(Math.abs(charge.amount))}</span>
+                  </div>
+                ))}
 
                 {/* Attachment / Other — flat $ adjustment (matches the Film Commission sheet's "Other" line). Use a negative number for a deduction. */}
                 <div style={{ marginBottom: 10, marginTop: 6 }}>

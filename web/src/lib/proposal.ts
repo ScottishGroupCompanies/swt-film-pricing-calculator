@@ -51,6 +51,10 @@ export interface ProposalData {
   minDim: number;
   // Editable post-calculation summary
   discount?: number;
+  bulkDiscount?: number;
+  bulkDiscountLabel?: string;
+  additionalCharges?: { name: string; description: string; amount: number }[];
+  installOnly?: boolean;
   attachmentOther?: number;
   subtotalAfterDiscount?: number;
   feePct?: number;
@@ -121,7 +125,9 @@ const TERMS_AND_CONDITIONS_HTML = `
 export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): string {
   const rows = d.lines.map((l) => {
     const filmLabel = l.film && l.film !== "—" ? l.film : "film";
-    const desc = `Supply and install ${filmLabel} on ${l.qty} window${l.qty > 1 ? "s" : ""}`;
+    const desc = d.installOnly
+      ? `Install only — customer supplies ${filmLabel} on ${l.qty} window${l.qty > 1 ? "s" : ""}. No film material charge.`
+      : `Supply and install ${filmLabel} on ${l.qty} window${l.qty > 1 ? "s" : ""}`;
     return `
     <tr>
       <td style="padding:12px 10px;border-bottom:1px solid ${BRAND.border};vertical-align:top;">
@@ -133,6 +139,28 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
       </td>
     </tr>`;
   }).join("");
+
+  const moneyRow = (title: string, detail: string, amount: number) => `
+    <tr>
+      <td style="padding:12px 10px;border-bottom:1px solid ${BRAND.border};vertical-align:top;">
+        <div style="font-weight:600;color:${BRAND.darkGray};">${esc(title)}</div>
+        ${detail ? `<div style="font-size:12px;color:#888;margin-top:3px;">${esc(detail)}</div>` : ""}
+      </td>
+      <td style="padding:12px 10px;border-bottom:1px solid ${BRAND.border};text-align:right;vertical-align:top;font-weight:500;">
+        ${amount.toFixed(2)}
+      </td>
+    </tr>`;
+
+  const materialRow = d.installOnly
+    ? moneyRow("Film material", "Customer supplies the film. No film material charge.", 0)
+    : "";
+  const bulkRow = d.bulkDiscount && d.bulkDiscount > 0
+    ? moneyRow("Bulk film discount", d.bulkDiscountLabel || "Bulk film discount", -d.bulkDiscount)
+    : "";
+  const chargeRows = (d.additionalCharges || [])
+    .filter((charge) => charge.amount !== 0)
+    .map((charge) => moneyRow(charge.name, charge.description, charge.amount))
+    .join("");
 
   const feeRow = d.feeAmount != null && d.feeAmount > 0 ? `
     <tr>
@@ -221,7 +249,7 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
       </div>
     </div>
     <div class="proposal-title">
-      <h1>Proposal</h1>
+      <h1>${d.installOnly ? "Install only" : "Proposal"}</h1>
       <div class="quote-num"># ${qNum}</div>
     </div>
   </div>
@@ -254,7 +282,7 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
       <tr><th>Item &amp; Description</th><th>Amount</th></tr>
     </thead>
     <tbody>
-      ${rows}${feeRow}
+      ${rows}${materialRow}${bulkRow}${chargeRows}${feeRow}
     </tbody>
   </table>
 
@@ -265,7 +293,7 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
 
   <div class="notes-section">
     <h3>Notes</h3>
-    <p>We Appreciate your business!</p>
+    <p>${d.installOnly ? "Install only — customer supplies the film. No film material charge. " : ""}We Appreciate your business!</p>
   </div>
 
   <div class="terms-section">
@@ -289,10 +317,17 @@ export function buildCustomerProposal(d: ProposalData): string {
     ? `\n  Subtotal: ${fmt$(d.subtotal)}\n  Minimum job adjustment: +${fmt$(d.minAdj)}`
     : "";
 
-  const hasAdjustments = (d.discount && d.discount > 0) || (d.feeAmount != null) || (d.deposit && d.deposit > 0);
+  const chargeLines = (d.additionalCharges || [])
+    .filter((charge) => charge.amount !== 0)
+    .map((charge) => `\n  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}`)
+    .join("");
+  const hasAdjustments = (d.discount && d.discount > 0) || (d.bulkDiscount && d.bulkDiscount > 0) || chargeLines || d.installOnly || (d.feeAmount != null) || (d.deposit && d.deposit > 0);
   const adjustmentLines = hasAdjustments
-    ? `\n  Film Total: ${fmt$(d.total)}` +
+    ? `\n  ${d.installOnly ? "Labor total" : "Film Total"}: ${fmt$(d.total)}` +
+      (d.installOnly ? "\n  Film material: $0.00" : "") +
+      (d.bulkDiscount && d.bulkDiscount > 0 ? `\n  ${d.bulkDiscountLabel || "Bulk film discount"}: −${fmt$(d.bulkDiscount)}` : "") +
       (d.discount && d.discount > 0 ? `\n  Discount: −${fmt$(d.discount)}` : "") +
+      chargeLines +
       (d.feeAmount != null ? `\n  Fee (${d.feePct ?? 4}%): +${fmt$(d.feeAmount)}` : "") +
       `\n  Total Cost: ${fmt$(d.totalCost ?? d.total)}` +
       (d.deposit && d.deposit > 0 ? `\n  Deposit: −${fmt$(d.deposit)}\n  Balance Due: ${fmt$(d.balanceDue ?? d.totalCost ?? d.total)}` : "")
@@ -308,7 +343,7 @@ export function buildCustomerProposal(d: ProposalData): string {
 7075 S. Alton Way, Centennial, CO 80112
 scottishwindowtinting.com
 
-PROPOSAL — ${d.date}
+${d.installOnly ? "INSTALL ONLY — customer supplies the film. No film material charge.\n" : ""}PROPOSAL — ${d.date}
 
 Customer: ${d.customer || "—"}
 Job Address: ${d.address || "—"}${contactLines ? `\n${contactLines}` : ""}
@@ -320,7 +355,7 @@ ${minNote}
 ────────────────────────────────${adjustmentLines || `\n  TOTAL: ${fmt$(d.total)}`}
 
 This proposal is valid for 30 days from the date above.
-Pricing includes professional installation of premium window film.
+${d.installOnly ? "Install only. The customer supplies the film. No film material is included. Installation labor is priced at the standard $/SF for the selected film." : "Pricing includes professional installation of premium window film."}
 Contact your sales representative to proceed or request modifications.`;
 }
 
@@ -331,20 +366,27 @@ export function buildInternalRecord(d: ProposalData): string {
     ` | Grp ${l.pg} · ${l.psf != null ? "$" + l.psf.toFixed(2) + "/SF" : "—"}` +
     ` | ${l.rollW}" roll` +
     ` | ${l.chargedSF?.toFixed(2)} charged SF (${l.actualSF?.toFixed(2)} actual, ${l.wastageSF?.toFixed(2)} wastage)` +
-    ` | Line: ${fmt$(l.lineTotal)}`
+    ` | Line: ${fmt$(l.lineTotal)}${d.installOnly ? " | Install only — customer supplies film" : ""}`
   ).join("\n");
 
   const contactLines = buildContactLines(d);
 
+  const chargeLines = (d.additionalCharges || [])
+    .filter((charge) => charge.amount !== 0)
+    .map((charge) => `  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}\n`)
+    .join("");
   const adjustmentBreakdown =
-    `  Film Total: ${fmt$(d.total)}\n` +
+    `  ${d.installOnly ? "Labor total" : "Film Total"}: ${fmt$(d.total)}\n` +
+    (d.installOnly ? "  Film material: $0.00 (customer supplies the film)\n" : "") +
+    (d.bulkDiscount && d.bulkDiscount > 0 ? `  ${d.bulkDiscountLabel || "Bulk film discount"}: −${fmt$(d.bulkDiscount)}\n` : "") +
     (d.discount && d.discount > 0 ? `  Discount: −${fmt$(d.discount)}\n` : "") +
+    chargeLines +
     (d.attachmentOther ? `  Attachment/Other: ${signed$(d.attachmentOther)}\n` : "") +
     (d.feeAmount != null ? `  Fee (${d.feePct ?? 4}%): +${fmt$(d.feeAmount)}\n` : "") +
     `  Total Cost: ${fmt$(d.totalCost ?? d.total)}\n` +
     (d.deposit && d.deposit > 0 ? `  Deposit: −${fmt$(d.deposit)}\n  Balance Due: ${fmt$(d.balanceDue ?? d.totalCost ?? d.total)}` : "");
 
-  return `INTERNAL RECORD — ${d.date}
+  return `${d.installOnly ? "INSTALL ONLY — customer supplies the film. No film material charge.\n" : ""}INTERNAL RECORD — ${d.date}
 
 Customer: ${d.customer || "—"}
 Address: ${d.address || "—"}
@@ -555,7 +597,10 @@ export function buildCommissionSheetHTML(d: ProposalData, extras: CommissionShee
     </div>
     <table class="fin-table">
       <tr><td class="label" colspan="2">Total</td><td class="value">${totalSF > 0 ? totalSF.toFixed(2) : "-"}</td></tr>
-      <tr><td class="label" colspan="2">Film Total</td><td class="value">${fmt$(d.total)}</td></tr>
+      <tr><td class="label" colspan="2">${d.installOnly ? "Labor total" : "Film Total"}</td><td class="value">${fmt$(d.total)}</td></tr>
+      ${d.installOnly ? `<tr><td class="label" colspan="2">Film material</td><td class="value">$0.00</td></tr>` : ""}
+      ${d.bulkDiscount && d.bulkDiscount > 0 ? `<tr><td class="label" colspan="2">${esc(d.bulkDiscountLabel || "Bulk film discount")}</td><td class="value">−${fmt$(d.bulkDiscount)}</td></tr>` : ""}
+      ${(d.additionalCharges || []).filter((charge) => charge.amount !== 0).map((charge) => `<tr><td class="label" colspan="2">${esc(charge.name)}: ${esc(charge.description)}</td><td class="value">${fmt$(charge.amount)}</td></tr>`).join("")}
       <tr><td class="check">${attachmentIsOther ? "" : "✓"}</td><td class="label">C-Bond</td><td class="value"></td></tr>
       <tr><td class="check">${attachmentIsOther ? "✓" : ""}</td><td class="label">Other</td><td class="value">${attachmentOtherAmt ? fmt$(attachmentOtherAmt) : ""}</td></tr>
       <tr><td class="label" colspan="2">Subtotal</td><td class="value">${fmt$(subtotal)}</td></tr>
@@ -597,9 +642,16 @@ export function buildCommissionSheet(d: ProposalData): string {
   const subtotal = d.subtotalAfterDiscount ?? d.total;
   const totalCost = d.totalCost ?? d.total;
 
+  const chargeLines = (d.additionalCharges || [])
+    .filter((charge) => charge.amount !== 0)
+    .map((charge) => `  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}\n`)
+    .join("");
   const financials =
-    `  Film Total: ${fmt$(d.total)}\n` +
+    `  ${d.installOnly ? "Labor total" : "Film Total"}: ${fmt$(d.total)}\n` +
+    (d.installOnly ? "  Film material: $0.00\n" : "") +
+    (d.bulkDiscount && d.bulkDiscount > 0 ? `  ${d.bulkDiscountLabel || "Bulk film discount"}: −${fmt$(d.bulkDiscount)}\n` : "") +
     (d.discount && d.discount > 0 ? `  Discount: −${fmt$(d.discount)}\n` : "") +
+    chargeLines +
     (d.attachmentOther ? `  Attachment / Other: ${signed$(d.attachmentOther)}\n` : "") +
     `  Subtotal: ${fmt$(subtotal)}\n` +
     `  ${d.feePct ?? 4}% Fee: +${fmt$(d.feeAmount ?? 0)}\n` +
@@ -618,7 +670,7 @@ export function buildCommissionSheet(d: ProposalData): string {
       `  Total Commission: ${d.commission != null ? fmt$(d.commission) : "—"}`
     : `  No user selected — cannot calculate commission.`;
 
-  return `COMMISSION SHEET — ${d.date}
+  return `${d.installOnly ? "INSTALL ONLY — customer supplies the film. No film material charge.\n" : ""}COMMISSION SHEET — ${d.date}
 
 Customer: ${d.customer || "—"}
 Address: ${d.address || "—"}

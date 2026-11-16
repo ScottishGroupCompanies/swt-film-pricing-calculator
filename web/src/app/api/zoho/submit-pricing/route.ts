@@ -19,6 +19,7 @@ import {
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { findUserById } from "@/lib/auth";
 import { resolveDealOwner } from "@/lib/zohoOwners";
+import { NEW_OPPORTUNITY_STAGE } from "@/lib/opportunityStage";
 
 interface PricingLineItem {
   desc: string;
@@ -83,6 +84,10 @@ interface SubmitPricingRequest {
   contactBillingAddress?: string;
   contactBillingCityStateZip?: string;
   opportunityName?: string;
+  installOnly?: boolean;
+  bulkDiscount?: number;
+  bulkDiscountLabel?: string;
+  additionalCharges?: { name: string; description: string; amount: number }[];
 }
 
 // Address parsing lives in @/lib/zoho now (parseCityStateZip) — shared with
@@ -280,7 +285,10 @@ export async function POST(request: NextRequest) {
 
     // ── 3. Create Deal (Opportunity) in CRM ───────────────────────────
     try {
-      const dealName = body.opportunityName?.trim() || `${body.customer} — Window Film ${body.date}`;
+      let dealName = body.opportunityName?.trim() || `${body.customer} — Window Film ${body.date}`;
+      if (body.installOnly && !/install only/i.test(dealName)) {
+        dealName = `${dealName} — Install only`;
+      }
       const dealDescription = buildDealDescription(body);
       const { city: installCity, state: installState, zip: installZip } = parseCityStateZip(body.cityStateZip);
 
@@ -297,7 +305,7 @@ export async function POST(request: NextRequest) {
         contactId: results.contactId || undefined,
         accountId: results.accountId || undefined,
         amount: body.chargedToClient || body.totalCost || body.total,
-        stage: "Qualification",
+        stage: NEW_OPPORTUNITY_STAGE,
         description: dealDescription,
         userName: body.userName,
         ownerZohoUserId: owner?.id,
@@ -389,17 +397,23 @@ function buildDealDescription(data: SubmitPricingRequest): string {
     `  • ${l.desc} — ${l.dims} (qty ${l.qty}) | ${l.film} (${l.brand}) | Grp ${l.pg} | ${l.chargedSF.toFixed(1)} SF | ${fmt$(l.lineTotal)}`
   ).join("\n");
 
-  return `Window Film Pricing — ${data.date}
+  const chargeLines = (data.additionalCharges || [])
+    .filter((charge) => charge.amount !== 0)
+    .map((charge) => `  • ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}`)
+    .join("\n");
+
+  return `${data.installOnly ? "INSTALL ONLY — customer supplies the film. No film material charge.\n" : ""}Window Film Pricing — ${data.date}
 User: ${data.userName} (${data.userLoc})
-Job Type: ${data.jobType || "Residential"}
+Job Type: ${data.jobType || "Residential"}${data.installOnly ? " | Install only" : ""}
+Stage: ${NEW_OPPORTUNITY_STAGE}
 Customer: ${data.customer}${data.jobType === "Commercial" && data.companyName ? ` | Business: ${data.companyName}` : ""}${data.jobType === "Commercial" && data.contactPersonName ? ` | Contact: ${data.contactPersonName}` : ""}
 Address: ${data.address}${data.cityStateZip ? `, ${data.cityStateZip}` : ""}
 ${data.phone ? `Phone: ${data.phone}\n` : ""}${data.email ? `Email: ${data.email}\n` : ""}
 Line Items:
 ${lines}
-
-Film Total: ${fmt$(data.total)}
-Total Cost: ${fmt$(data.totalCost ?? data.total)}
+${chargeLines ? `\nAdditional charges:\n${chargeLines}\n` : ""}
+${data.installOnly ? "Film material: $0.00\n" : ""}Film Total: ${fmt$(data.total)}
+${data.bulkDiscount && data.bulkDiscount > 0 ? `${data.bulkDiscountLabel || "Bulk film discount"}: −${fmt$(data.bulkDiscount)}\n` : ""}Total Cost: ${fmt$(data.totalCost ?? data.total)}
 ${data.chargedToClient != null ? `Charged to Client: ${fmt$(data.chargedToClient)}` : ""}
 ${data.totalCommission != null ? `Commission: ${fmt$(data.totalCommission)}` : ""}`;
 }
@@ -414,8 +428,13 @@ function buildNoteContent(data: SubmitPricingRequest): string {
 `
   ).join("\n");
 
-  return `PRICING DETAIL — ${data.date}
+  const chargeLines = (data.additionalCharges || [])
+    .filter((charge) => charge.amount !== 0)
+    .map((charge) => `  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}`)
+    .join("\n");
 
+  return `PRICING DETAIL — ${data.date}
+${data.installOnly ? "INSTALL ONLY — customer supplies the film. No film material charge.\n" : ""}
 Customer: ${data.customer}
 Address: ${data.address}${data.cityStateZip ? `, ${data.cityStateZip}` : ""}
 ${data.phone ? `Phone: ${data.phone}\n` : ""}${data.email ? `Email: ${data.email}\n` : ""}User: ${data.userName} (${data.userLoc})
@@ -432,7 +451,7 @@ ${data.minAdj > 0 ? `  Min adjustment: +${fmt$(data.minAdj)}\n` : ""}  Film Tota
 ${data.chargedToClient != null ? `  Charged to client: ${fmt$(data.chargedToClient)}\n  Difference: ${fmt$(data.difference)}` : ""}
 
 ADJUSTMENTS:
-${data.discount && data.discount > 0 ? `  Discount: −${fmt$(data.discount)}\n` : ""}${data.feeAmount != null ? `  Fee (${data.feePct ?? 4}%): +${fmt$(data.feeAmount)}\n` : ""}  Total Cost: ${fmt$(data.totalCost ?? data.total)}
+${data.installOnly ? "  Film material: $0.00\n" : ""}${data.bulkDiscount && data.bulkDiscount > 0 ? `  ${data.bulkDiscountLabel || "Bulk film discount"}: −${fmt$(data.bulkDiscount)}\n` : ""}${data.discount && data.discount > 0 ? `  Discount: −${fmt$(data.discount)}\n` : ""}${chargeLines ? `${chargeLines}\n` : ""}${data.feeAmount != null ? `  Fee (${data.feePct ?? 4}%): +${fmt$(data.feeAmount)}\n` : ""}  Total Cost: ${fmt$(data.totalCost ?? data.total)}
 ${data.deposit && data.deposit > 0 ? `  Deposit: −${fmt$(data.deposit)}\n  Balance Due: ${fmt$(data.balanceDue ?? data.totalCost ?? data.total)}` : ""}
 
 COMMISSION:
