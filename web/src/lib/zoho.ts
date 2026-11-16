@@ -21,6 +21,7 @@ import {
 } from "./address";
 import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustomerLink";
 import { booksLineItemBody } from "./booksEstimatePayload";
+import { NEW_OPPORTUNITY_STAGE } from "./opportunityStage";
 import { matchUserIdByEmail } from "./zohoOwners";
 
 export {
@@ -407,7 +408,7 @@ export async function createDeal(deal: {
   const record: ZohoCRMRecord = {
     Deal_Name: deal.dealName,
     Amount: deal.amount,
-    Stage: deal.stage || "Qualification",
+    Stage: deal.stage || NEW_OPPORTUNITY_STAGE,
   };
   // Zoho expects Contact_Name as an object with id, not a plain string
   if (deal.contactId) record.Contact_Name = { id: deal.contactId };
@@ -1111,6 +1112,8 @@ export async function createBooksEstimate(orgId: string, input: {
   salespersonId?: string;
   paymentTerms?: string;
   termsAndConditions?: string;
+  /** Customer-facing note. Used for Install only quotes. */
+  notes?: string;
   lineItems: BooksEstimateLineItem[];
   // Job-site installation address — populates the Books estimate template's
   // "Installation Address" custom field (api_name: cf_installation_address).
@@ -1135,6 +1138,7 @@ export async function createBooksEstimate(orgId: string, input: {
   if (input.salespersonId) payload.salesperson_id = input.salespersonId;
   if (input.salespersonName) payload.salesperson_name = input.salespersonName;
   if (input.termsAndConditions) payload.terms = input.termsAndConditions;
+  if (input.notes) payload.notes = input.notes;
 
   const installationAddressLines = formatInstallationAddress({
     street: input.installationStreet,

@@ -78,6 +78,10 @@ interface CreateEstimateRequest {
   minAdj?: number;
   /** Calculator total (minimum, discount, other, plus fee) — the deal amount. */
   totalCost?: number;
+  installOnly?: boolean;
+  bulkDiscount?: number;
+  bulkDiscountLabel?: string;
+  additionalCharges?: { name: string; description: string; amount: number }[];
   lines: EstimateLine[];
 }
 
@@ -234,6 +238,10 @@ export async function POST(request: NextRequest) {
       feeAmount: body.feeAmount,
       feePct: body.feePct,
       totalCost: body.totalCost,
+      installOnly: body.installOnly,
+      charges: body.additionalCharges,
+      bulkDiscount: body.bulkDiscount,
+      bulkDiscountLabel: body.bulkDiscountLabel,
     });
     const lineItems: BooksEstimateLineItem[] = [];
     const unmatchedFilms: string[] = [];
@@ -253,7 +261,7 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (line.kind === "film") {
+      if (line.kind === "film" || line.kind === "labor") {
         const item = await searchBooksItem(orgId, line.itemName) || await searchBooksItem(orgId, "Other Film");
         if (!item) {
           unmatchedFilms.push(line.description || "Unknown film");
@@ -262,7 +270,7 @@ export async function POST(request: NextRequest) {
         if (!filmItem) filmItem = item;
         lineItems.push({
           itemId: item.id,
-          name: item.name,
+          name: line.kind === "labor" ? line.name : item.name,
           description: line.description,
           rate: line.rate,
           quantity: line.quantity,
@@ -337,6 +345,9 @@ export async function POST(request: NextRequest) {
       installationCity: installParsed.city,
       installationState: installParsed.state,
       installationZip: installParsed.zip,
+      notes: body.installOnly
+        ? "Install only — customer supplies the film. No film material charge."
+        : undefined,
     });
 
     // ── 5. Wait for Zoho's CRM↔Books sync to create the matching

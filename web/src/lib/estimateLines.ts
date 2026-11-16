@@ -14,7 +14,7 @@ export interface EstimateSourceLine {
 }
 
 export interface PlannedEstimateLine {
-  kind: "film" | "minimum" | "adjustment" | "fee";
+  kind: "film" | "labor" | "charge" | "discount" | "minimum" | "adjustment" | "fee";
   /** Books catalog item to look up. Empty means "use the film line's item". */
   itemName: string;
   name: string;
@@ -67,7 +67,7 @@ function setLineAmount(line: PlannedEstimateLine, next: number): void {
 function absorbReduction(lines: PlannedEstimateLine[], amount: number): void {
   let remaining = money(amount);
   const groups = [
-    lines.filter((line) => line.kind === "film"),
+    lines.filter((line) => line.kind === "film" || line.kind === "labor"),
     lines.filter((line) => line.kind === "minimum" || line.kind === "adjustment"),
     lines.filter((line) => line.kind === "fee"),
   ];
@@ -106,9 +106,21 @@ export function planEstimateLines(input: {
   feePct?: number | null;
   /** Calculator / deal total (film after minimum, discount, other, plus fee). */
   totalCost?: number | null;
+  /** Install only: customer supplies the film. Labor uses the line totals already passed in. */
+  installOnly?: boolean;
+  /** Positive extra lines (equipment, travel, other). */
+  charges?: { name: string; description: string; amount: number }[];
+  /**
+   * Bulk film discount in dollars. Sent as its own negative line so the
+   * customer can see it. A manual percent discount is still folded into
+   * the film rates and does not add a Books discount column.
+   */
+  bulkDiscount?: number | null;
+  bulkDiscountLabel?: string | null;
 }): PlannedEstimate {
   const planned: PlannedEstimateLine[] = [];
 
+  const installOnly = input.installOnly === true;
   for (const line of input.lines) {
     const lineTotal = money(line.lineTotal);
     if (!(lineTotal > 0)) continue;
@@ -116,13 +128,42 @@ export function planEstimateLines(input: {
     const { rate, quantity } = filmRateAndQty(lineTotal, qty);
     const filmLabel = line.film && line.film !== "—" ? line.film : "Window Film";
     const desc = line.desc || filmLabel;
+    const itemName = mapFilmToBooksItemName(line.film || "");
     planned.push({
-      kind: "film",
-      itemName: mapFilmToBooksItemName(line.film || ""),
-      name: mapFilmToBooksItemName(line.film || ""),
-      description: `${desc} (qty ${qty})${line.film && line.film !== "—" ? ` · ${line.film}` : ""}`,
+      kind: installOnly ? "labor" : "film",
+      itemName,
+      name: installOnly ? "Install only" : itemName,
+      description: installOnly
+        ? `${desc} (qty ${qty}) · Install only — customer supplies ${filmLabel}. No film material charge.`
+        : `${desc} (qty ${qty})${line.film && line.film !== "—" ? ` · ${line.film}` : ""}`,
       rate,
       quantity,
+    });
+  }
+
+  for (const charge of input.charges || []) {
+    const amount = money(charge.amount);
+    if (!(Math.abs(amount) > 0)) continue;
+    const name = charge.name.trim() || "Other";
+    planned.push({
+      kind: "charge",
+      itemName: "",
+      name,
+      description: charge.description.trim() || name,
+      rate: amount,
+      quantity: 1,
+    });
+  }
+
+  const bulk = input.bulkDiscount != null ? money(input.bulkDiscount) : 0;
+  if (bulk > 0) {
+    planned.push({
+      kind: "discount",
+      itemName: "",
+      name: "Bulk film discount",
+      description: input.bulkDiscountLabel?.trim() || "Bulk film discount",
+      rate: -bulk,
+      quantity: 1,
     });
   }
 
