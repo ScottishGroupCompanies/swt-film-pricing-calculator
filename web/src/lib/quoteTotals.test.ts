@@ -34,6 +34,28 @@ test("additional charges are in the total and the fee base", () => {
   assert.equal(totals.totalCost, 1352);
 });
 
+test("the 4% fee and commission include attachment, equipment, travel, and other", () => {
+  const attachment = 40;
+  const equipment = 100;
+  const travel = 75;
+  const other = 25;
+  const totals = quoteAdjustments({
+    ...base,
+    filmTotal: 1000,
+    highestPg: 2,
+    attachmentOther: attachment,
+    additionalCharges: equipment + travel + other,
+    commRate: 0.1,
+    feePct: 4,
+  });
+  const subtotal = 1000 + attachment + equipment + travel + other;
+  assert.equal(totals.bulkDiscount, 0);
+  assert.equal(totals.subtotalAfterDiscount, subtotal);
+  assert.equal(totals.feeAmount, subtotal * 0.04);
+  assert.equal(totals.baseCommission, subtotal * 0.1);
+  assert.equal(totals.totalCost, subtotal + subtotal * 0.04);
+});
+
 test("install-only skips bulk film discount and still prices the fee on labor", () => {
   const totals = quoteAdjustments({
     ...base,

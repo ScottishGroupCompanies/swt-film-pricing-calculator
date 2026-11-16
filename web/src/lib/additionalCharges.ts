@@ -31,7 +31,18 @@ export function sumAdditionalCharges(charges: { amount: string }[]): number {
   return charges.reduce((sum, charge) => sum + additionalChargeAmount(charge), 0);
 }
 
-/** Lines with a positive amount, in the order the rep entered them. */
+/**
+ * Customer-facing label. A typed Other description replaces "Other".
+ * Equipment and Travel keep their category name, with the description after it
+ * when the rep changed the default text.
+ */
+export function additionalChargeHeading(charge: { name: string; description?: string }): string {
+  const description = (charge.description || "").trim();
+  if (description && description !== charge.name) return `${charge.name}: ${description}`;
+  return charge.name;
+}
+
+/** Lines with a non-zero amount, in the order the rep entered them. */
 export function pricedAdditionalCharges<T extends { description: string; amount: string; kind: AdditionalChargeKind }>(
   charges: T[],
 ): { name: string; description: string; amount: number }[] {
@@ -39,9 +50,14 @@ export function pricedAdditionalCharges<T extends { description: string; amount:
   for (const charge of charges) {
     const amount = Math.round((additionalChargeAmount(charge) + Number.EPSILON) * 100) / 100;
     if (!(Math.abs(amount) > 0)) continue;
-    const name = ADDITIONAL_CHARGE_LABELS[charge.kind] || "Other";
-    const description = charge.description.trim() || name;
-    lines.push({ name, description, amount });
+    const category = ADDITIONAL_CHARGE_LABELS[charge.kind] || "Other";
+    const typed = charge.description.trim();
+    if (charge.kind === "other") {
+      const label = typed || category;
+      lines.push({ name: label, description: label, amount });
+      continue;
+    }
+    lines.push({ name: category, description: typed || category, amount });
   }
   return lines;
 }

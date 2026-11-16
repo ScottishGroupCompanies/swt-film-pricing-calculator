@@ -18,6 +18,8 @@ import {
 } from "@/lib/zoho";
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { findUserById } from "@/lib/auth";
+import { additionalChargeHeading } from "@/lib/additionalCharges";
+import { INSTALL_ONLY_RATE_PER_CHARGED_SF } from "@/lib/pricingData";
 import { resolveDealOwner } from "@/lib/zohoOwners";
 import { NEW_OPPORTUNITY_STAGE } from "@/lib/opportunityStage";
 
@@ -399,10 +401,10 @@ function buildDealDescription(data: SubmitPricingRequest): string {
 
   const chargeLines = (data.additionalCharges || [])
     .filter((charge) => charge.amount !== 0)
-    .map((charge) => `  • ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}`)
+    .map((charge) => `  • ${additionalChargeHeading(charge)} — ${fmt$(charge.amount)}`)
     .join("\n");
 
-  return `${data.installOnly ? "INSTALL ONLY — customer supplies the film. No film material charge.\n" : ""}Window Film Pricing — ${data.date}
+  return `${data.installOnly ? `INSTALL ONLY — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot. No film material charge.\n` : ""}Window Film Pricing — ${data.date}
 User: ${data.userName} (${data.userLoc})
 Job Type: ${data.jobType || "Residential"}${data.installOnly ? " | Install only" : ""}
 Stage: ${NEW_OPPORTUNITY_STAGE}
@@ -430,15 +432,14 @@ function buildNoteContent(data: SubmitPricingRequest): string {
 
   const chargeLines = (data.additionalCharges || [])
     .filter((charge) => charge.amount !== 0)
-    .map((charge) => `  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}`)
+    .map((charge) => `  ${additionalChargeHeading(charge)} — ${fmt$(charge.amount)}`)
     .join("\n");
 
   return `PRICING DETAIL — ${data.date}
-${data.installOnly ? "INSTALL ONLY — customer supplies the film. No film material charge.\n" : ""}
+${data.installOnly ? `INSTALL ONLY — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot. No film material charge.\n` : ""}
 Customer: ${data.customer}
 Address: ${data.address}${data.cityStateZip ? `, ${data.cityStateZip}` : ""}
 ${data.phone ? `Phone: ${data.phone}\n` : ""}${data.email ? `Email: ${data.email}\n` : ""}User: ${data.userName} (${data.userLoc})
-Min dimension: ${data.minDim}"
 
 LINE ITEMS:
 ${lines}

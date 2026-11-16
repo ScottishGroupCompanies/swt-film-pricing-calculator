@@ -10,6 +10,16 @@ export const PRICING_GROUPS: Record<number, number> = {
 export const ROLL_WIDTHS = [36, 48, 60, 72, 84, 96, 108, 120, 144];
 export const MIN_PRICE = 250;
 export const MIN_DIM_DEFAULT = 8;
+/**
+ * Install-only labor rate. Multiplied by charged square feet (the same
+ * basis as a supply-and-install line). Film and pricing group do not change it.
+ */
+export const INSTALL_ONLY_RATE_PER_CHARGED_SF = 10;
+
+export function installOnlyLaborTotal(chargedSqFt: number): number {
+  if (!(chargedSqFt > 0)) return 0;
+  return chargedSqFt * INSTALL_ONLY_RATE_PER_CHARGED_SF;
+}
 export const DEFAULT_FEE_PCT = 4; // 4% fee (editable per job)
 
 // Commission: base commission = user's flat rate x Subtotal (Film Total minus

@@ -3,14 +3,14 @@
 import { useState, useCallback, useMemo, useRef, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import {
-  PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT,
+  PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT, INSTALL_ONLY_RATE_PER_CHARGED_SF,
   FILMS, BRANDS, BRAND_COLORS,
   fmt$, fmtSF, getCommRate, calcRowGeometry, newRow, initials,
   type User, type Film, type RowData, type RowCalc,
 } from "@/lib/pricingData";
 import { parseCityStateZip } from "@/lib/address";
 import {
-  ADDITIONAL_CHARGE_DEFAULTS, ADDITIONAL_CHARGE_LABELS, pricedAdditionalCharges, sumAdditionalCharges,
+  ADDITIONAL_CHARGE_DEFAULTS, ADDITIONAL_CHARGE_LABELS, additionalChargeHeading, pricedAdditionalCharges, sumAdditionalCharges,
   type AdditionalCharge, type AdditionalChargeKind,
 } from "@/lib/additionalCharges";
 import { placeFilmPicker, type FilmPickerPlacement } from "@/lib/filmPickerPlacement";
@@ -998,14 +998,16 @@ export default function PricingCalculator() {
       const geo = calcRowGeometry(row, minDim);
       if (!geo) return null;
       const pg = row.pgOverride ?? row.film?.pg ?? null;
-      const psf = pg ? PRICING_GROUPS[pg] : null;
-      const calculatedLineTotal = psf ? geo.chargedSF * psf : null;
+      // Install-only labor is a flat rate per charged square foot. Film and
+      // pricing group do not change it. Supply-and-install still uses the group rate.
+      const psf = installOnly ? INSTALL_ONLY_RATE_PER_CHARGED_SF : (pg ? PRICING_GROUPS[pg] : null);
+      const calculatedLineTotal = psf != null ? geo.chargedSF * psf : null;
       const overrideVal = row.lineTotalOverride.trim() !== "" ? parseFloat(row.lineTotalOverride) : null;
       const isOverridden = overrideVal != null && !isNaN(overrideVal);
       const lineTotal = isOverridden ? overrideVal : calculatedLineTotal;
       return { ...geo, pg, psf, lineTotal, calculatedLineTotal, isOverridden };
     });
-  }, [rows, minDim]);
+  }, [rows, minDim, installOnly]);
 
   const totals = useMemo(() => {
     let totalActual = 0, totalCharged = 0, totalPrice = 0, winCount = 0;
@@ -1025,7 +1027,8 @@ export default function PricingCalculator() {
 
     // Film total (after the $250 minimum) → bulk film discount → manual
     // discount % → attachment/other and additional charges → fee.
-    // Install only uses this same film total as labor. No material is added.
+    // Install-only labor is already in filmTotal at INSTALL_ONLY_RATE_PER_CHARGED_SF
+    // per charged square foot. The $250 minimum still applies above.
     const filmTotal = total ?? 0;
     const commRate = user ? getCommRate(user) : null;
     const adjustments = quoteAdjustments({
@@ -1451,7 +1454,7 @@ export default function PricingCalculator() {
             </button>
             {installOnly && (
               <p style={{ fontSize: 12, color: THEME.textMuted, margin: "0 0 12px" }}>
-                Film material is $0. Installation labor uses the same $/SF this calculator already charges for the selected film. No separate film labor rate is on file.
+                {`Film material is $0. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot for every film. The $250 minimum still applies.`}
               </p>
             )}
 
@@ -1679,7 +1682,7 @@ export default function PricingCalculator() {
               <p style={{ ...labelSt, marginBottom: 4 }}>Window Line Items</p>
               <p style={{ fontSize: 12, color: THEME.textMuted, marginBottom: 0 }}>
                 {installOnly
-                  ? "Install only. Select the film the customer is supplying so labor uses that film's $/SF. Film material is not charged."
+                  ? `Install only. Labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot, no matter which film is selected. Film material is not charged.`
                   : "Each row can use a different film. Enter width, height, and quantity to calculate pricing."}
               </p>
             </div>
@@ -2214,7 +2217,9 @@ export default function PricingCalculator() {
                     <div key={charge.id} style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                         <span style={{ fontSize: 11, fontWeight: 600, color: THEME.darkGray }}>
-                          {ADDITIONAL_CHARGE_LABELS[charge.kind]}
+                          {charge.kind === "other" && charge.description.trim()
+                            ? charge.description.trim()
+                            : ADDITIONAL_CHARGE_LABELS[charge.kind]}
                         </span>
                         <button
                           type="button"
@@ -2230,7 +2235,7 @@ export default function PricingCalculator() {
                       <input
                         value={charge.description}
                         onChange={(e) => setAdditionalCharges((prev) => prev.map((item) => item.id === charge.id ? { ...item, description: e.target.value } : item))}
-                        placeholder={charge.kind === "other" ? "Description" : ADDITIONAL_CHARGE_DEFAULTS[charge.kind]}
+                        placeholder={charge.kind === "other" ? "Description, for example After hours work" : ADDITIONAL_CHARGE_DEFAULTS[charge.kind]}
                         style={{
                           width: "100%", padding: "7px 10px",
                           border: `1px solid ${THEME.border}`, borderRadius: 6,
@@ -2283,7 +2288,7 @@ export default function PricingCalculator() {
                     display: "flex", justifyContent: "space-between",
                     padding: "3px 0", fontSize: 12, color: THEME.textMuted,
                   }}>
-                    <span>{charge.name}{charge.description && charge.description !== charge.name ? `: ${charge.description}` : ""}</span>
+                    <span>{additionalChargeHeading(charge)}</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>{charge.amount >= 0 ? "+" : "−"}{fmt$(Math.abs(charge.amount))}</span>
                   </div>
                 ))}
