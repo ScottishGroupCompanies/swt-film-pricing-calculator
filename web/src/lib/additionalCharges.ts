@@ -1,6 +1,6 @@
 /** Extra quote lines a rep adds on top of window film. */
 
-export type AdditionalChargeKind = "equipment" | "travel" | "other";
+export type AdditionalChargeKind = "equipment" | "travel" | "other" | "custom";
 
 export interface AdditionalCharge {
   id: string;
@@ -14,12 +14,14 @@ export const ADDITIONAL_CHARGE_LABELS: Record<AdditionalChargeKind, string> = {
   equipment: "Equipment",
   travel: "Travel",
   other: "Other",
+  custom: "Custom / Other",
 };
 
 export const ADDITIONAL_CHARGE_DEFAULTS: Record<AdditionalChargeKind, string> = {
   equipment: "Equipment",
   travel: "Travel (trip charge)",
   other: "",
+  custom: "",
 };
 
 export function additionalChargeAmount(charge: { amount: string }): number {
@@ -52,7 +54,7 @@ export function pricedAdditionalCharges<T extends { description: string; amount:
     if (!(Math.abs(amount) > 0)) continue;
     const category = ADDITIONAL_CHARGE_LABELS[charge.kind] || "Other";
     const typed = charge.description.trim();
-    if (charge.kind === "other") {
+    if (charge.kind === "other" || charge.kind === "custom") {
       const label = typed || category;
       lines.push({ name: label, description: label, amount });
       continue;

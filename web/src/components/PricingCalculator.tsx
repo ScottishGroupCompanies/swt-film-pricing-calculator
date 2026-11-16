@@ -2211,9 +2211,81 @@ export default function PricingCalculator() {
                   <div style={{
                     fontSize: 11, color: THEME.textMuted, fontWeight: 500, marginBottom: 6,
                   }}>
+                    Custom / Other
+                  </div>
+                  <p style={{ fontSize: 11, color: THEME.textMuted, margin: "0 0 6px" }}>
+                    A separate line, not a film. Type a description and an amount.
+                  </p>
+                  {additionalCharges.filter((charge) => charge.kind === "custom").map((charge) => (
+                    <div key={charge.id} style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: THEME.darkGray }}>
+                          {charge.description.trim() || ADDITIONAL_CHARGE_LABELS.custom}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setAdditionalCharges((prev) => prev.filter((item) => item.id !== charge.id))}
+                          style={{
+                            border: "none", background: "transparent", color: THEME.textMuted,
+                            fontSize: 11, cursor: "pointer", fontFamily: "inherit", padding: 0,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <input
+                        value={charge.description}
+                        onChange={(e) => setAdditionalCharges((prev) => prev.map((item) => item.id === charge.id ? { ...item, description: e.target.value } : item))}
+                        placeholder="Description"
+                        style={{
+                          width: "100%", padding: "7px 10px",
+                          border: `1px solid ${THEME.border}`, borderRadius: 6,
+                          background: THEME.white, color: THEME.textDark,
+                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                        }}
+                      />
+                      <input
+                        type="number"
+                        value={charge.amount}
+                        onChange={(e) => setAdditionalCharges((prev) => prev.map((item) => item.id === charge.id ? { ...item, amount: e.target.value } : item))}
+                        placeholder="0.00"
+                        step={0.01}
+                        style={{
+                          width: "100%", padding: "7px 10px",
+                          border: `1px solid ${THEME.border}`, borderRadius: 6,
+                          background: THEME.white, color: THEME.textDark,
+                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      />
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setAdditionalCharges((prev) => [...prev, {
+                      id: `charge-${Date.now()}-${prev.length}`,
+                      kind: "custom",
+                      description: "",
+                      amount: "",
+                    }])}
+                    style={{
+                      padding: "5px 8px", background: THEME.white,
+                      border: `1px solid ${THEME.border}`, borderRadius: 6,
+                      fontSize: 11, fontWeight: 500, cursor: "pointer",
+                      fontFamily: "inherit", color: THEME.darkGray,
+                    }}
+                  >
+                    + Custom / Other
+                  </button>
+                </div>
+
+                <div style={{ margin: "8px 0 10px" }}>
+                  <div style={{
+                    fontSize: 11, color: THEME.textMuted, fontWeight: 500, marginBottom: 6,
+                  }}>
                     Additional charges
                   </div>
-                  {additionalCharges.map((charge) => (
+                  {additionalCharges.filter((charge) => charge.kind !== "custom").map((charge) => (
                     <div key={charge.id} style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                         <span style={{ fontSize: 11, fontWeight: 600, color: THEME.darkGray }}>
