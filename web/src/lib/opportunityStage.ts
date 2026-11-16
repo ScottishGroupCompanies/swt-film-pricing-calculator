@@ -35,3 +35,11 @@ export const NEW_OPPORTUNITY_STAGE: OpportunityStage = "Discovery";
 
 /** Stage this app wrote before the list above. Kept so older deals can be recognized. */
 export const LEGACY_OPPORTUNITY_STAGE = "Qualification";
+
+/** Display value to send as Deal.Stage. Unknown input stays Discovery. */
+export function resolveOpportunityStage(value: unknown): OpportunityStage {
+  if (typeof value === "string" && (OPPORTUNITY_STAGES as readonly string[]).includes(value)) {
+    return value as OpportunityStage;
+  }
+  return NEW_OPPORTUNITY_STAGE;
+}
