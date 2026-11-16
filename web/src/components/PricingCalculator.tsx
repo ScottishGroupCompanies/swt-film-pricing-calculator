@@ -15,6 +15,7 @@ import {
 } from "@/lib/additionalCharges";
 import { placeFilmPicker, type FilmPickerPlacement } from "@/lib/filmPickerPlacement";
 import { BULK_FILM_DISCOUNT_LABEL, formatDiscountPercent, quoteAdjustments } from "@/lib/bulkFilmDiscount";
+import { NEW_OPPORTUNITY_STAGE, OPPORTUNITY_STAGES, resolveOpportunityStage, type OpportunityStage } from "@/lib/opportunityStage";
 import {
   buildCustomerProposal, buildInternalRecord, buildPrintableHTML,
   downloadFile, printHTML, type ProposalData, type ProposalLine,
@@ -746,6 +747,7 @@ interface SavedDraft {
   additionalCharges?: AdditionalCharge[];
   /** Workbook checkbox for the bulk film discount. Missing drafts stay on. */
   bulkDiscountEnabled?: boolean;
+  opportunityStage?: OpportunityStage;
 }
 
 function readDraft(): { draft: SavedDraft; savedAt: number } | null {
@@ -863,7 +865,8 @@ export default function PricingCalculator() {
   const [deposit, setDeposit] = useState<string>("");
   const [installOnly, setInstallOnly] = useState(false);
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>([]);
-  const [bulkDiscountEnabled, setBulkDiscountEnabled] = useState(true); 
+  const [bulkDiscountEnabled, setBulkDiscountEnabled] = useState(true);
+  const [opportunityStage, setOpportunityStage] = useState<OpportunityStage>(NEW_OPPORTUNITY_STAGE); 
 
   const updateRow = useCallback((id: number, field: keyof RowData, val: string | Film | number | null) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: val } : r)));
@@ -919,6 +922,7 @@ export default function PricingCalculator() {
     setInstallOnly(saved.installOnly === true);
     setAdditionalCharges(Array.isArray(saved.additionalCharges) ? saved.additionalCharges : []);
     setBulkDiscountEnabled(saved.bulkDiscountEnabled !== false);
+    setOpportunityStage(resolveOpportunityStage(saved.opportunityStage));
     setDraftRestoredAt(Date.now());
     setDraftPrompt(null);
     // Release the guard on the next tick, after all the setters above
@@ -953,7 +957,7 @@ export default function PricingCalculator() {
         contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
         opportunityName, opportunityNameTouched, minDim, rows,
         chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
-        installOnly, additionalCharges, bulkDiscountEnabled,
+        installOnly, additionalCharges, bulkDiscountEnabled, opportunityStage,
       };
       try {
         window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ draft, savedAt: Date.now() }));
@@ -968,7 +972,7 @@ export default function PricingCalculator() {
     contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
     opportunityName, opportunityNameTouched, minDim, rows,
     chargedToClient, discountEnabled, discountPct, attachmentOther, feePct, deposit,
-    installOnly, additionalCharges, bulkDiscountEnabled,
+    installOnly, additionalCharges, bulkDiscountEnabled, opportunityStage,
     draftPrompt,
   ]);
 
@@ -1137,12 +1141,13 @@ export default function PricingCalculator() {
       contactBillingAddress,
       contactBillingCityStateZip,
       opportunityName: effectiveOpportunityName,
+      opportunityStage,
     };
   }, [
     rows, lineCalcs, totals, customer, address, cityStateZip, phone, email, user, minDim,
     jobType, companyName, companyAddress, companyCityStateZip, companyPhone, companyEmail,
     contactPersonName, contactPersonPhone, contactPersonEmail, contactBillingAddress, contactBillingCityStateZip,
-    effectiveOpportunityName, installOnly,
+    effectiveOpportunityName, installOnly, opportunityStage,
   ]);
 
   function handlePrint() {
@@ -1201,6 +1206,7 @@ export default function PricingCalculator() {
     setInstallOnly(false);
     setAdditionalCharges([]);
     setBulkDiscountEnabled(true);
+    setOpportunityStage(NEW_OPPORTUNITY_STAGE);
     clearDraft();
     setDraftRestoredAt(null);
   }
@@ -1646,6 +1652,21 @@ export default function PricingCalculator() {
               <input value={cityStateZip} onChange={(e) => setCityStateZip(e.target.value)} placeholder="City, State, ZIP" style={inputSt} />
               <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone" style={inputSt} />
               <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" style={inputSt} />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 10, fontWeight: 600, color: THEME.textMuted, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Opportunity stage <span style={{ fontWeight: 400, textTransform: "none" }}>(Zoho CRM)</span>
+              </p>
+              <select
+                value={opportunityStage}
+                onChange={(e) => setOpportunityStage(resolveOpportunityStage(e.target.value))}
+                style={inputSt}
+              >
+                {OPPORTUNITY_STAGES.map((stage) => (
+                  <option key={stage} value={stage}>{stage}</option>
+                ))}
+              </select>
             </div>
 
             {/* Opportunity Name — auto-suggested, editable */}

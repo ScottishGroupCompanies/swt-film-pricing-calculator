@@ -76,6 +76,7 @@ export interface ProposalData {
   contactBillingAddress?: string;
   contactBillingCityStateZip?: string;
   opportunityName?: string;
+  opportunityStage?: string;
 }
 
 const BRAND = {

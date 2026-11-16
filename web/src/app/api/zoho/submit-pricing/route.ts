@@ -21,7 +21,7 @@ import { findUserById } from "@/lib/auth";
 import { additionalChargeHeading } from "@/lib/additionalCharges";
 import { INSTALL_ONLY_RATE_PER_CHARGED_SF } from "@/lib/pricingData";
 import { resolveDealOwner } from "@/lib/zohoOwners";
-import { NEW_OPPORTUNITY_STAGE } from "@/lib/opportunityStage";
+import { resolveOpportunityStage } from "@/lib/opportunityStage";
 
 interface PricingLineItem {
   desc: string;
@@ -86,6 +86,7 @@ interface SubmitPricingRequest {
   contactBillingAddress?: string;
   contactBillingCityStateZip?: string;
   opportunityName?: string;
+  opportunityStage?: string;
   installOnly?: boolean;
   bulkDiscount?: number;
   bulkDiscountLabel?: string;
@@ -291,7 +292,8 @@ export async function POST(request: NextRequest) {
       if (body.installOnly && !/install only/i.test(dealName)) {
         dealName = `${dealName} — Install only`;
       }
-      const dealDescription = buildDealDescription(body);
+      const stage = resolveOpportunityStage(body.opportunityStage);
+      const dealDescription = buildDealDescription({ ...body, opportunityStage: stage });
       const { city: installCity, state: installState, zip: installZip } = parseCityStateZip(body.cityStateZip);
 
       // Owner = the logged-in rep, from the server session (never the client).
@@ -307,7 +309,7 @@ export async function POST(request: NextRequest) {
         contactId: results.contactId || undefined,
         accountId: results.accountId || undefined,
         amount: body.chargedToClient || body.totalCost || body.total,
-        stage: NEW_OPPORTUNITY_STAGE,
+        stage,
         description: dealDescription,
         userName: body.userName,
         ownerZohoUserId: owner?.id,
@@ -407,7 +409,7 @@ function buildDealDescription(data: SubmitPricingRequest): string {
   return `${data.installOnly ? `INSTALL ONLY — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot. No film material charge.\n` : ""}Window Film Pricing — ${data.date}
 User: ${data.userName} (${data.userLoc})
 Job Type: ${data.jobType || "Residential"}${data.installOnly ? " | Install only" : ""}
-Stage: ${NEW_OPPORTUNITY_STAGE}
+Stage: ${resolveOpportunityStage(data.opportunityStage)}
 Customer: ${data.customer}${data.jobType === "Commercial" && data.companyName ? ` | Business: ${data.companyName}` : ""}${data.jobType === "Commercial" && data.contactPersonName ? ` | Contact: ${data.contactPersonName}` : ""}
 Address: ${data.address}${data.cityStateZip ? `, ${data.cityStateZip}` : ""}
 ${data.phone ? `Phone: ${data.phone}\n` : ""}${data.email ? `Email: ${data.email}\n` : ""}
