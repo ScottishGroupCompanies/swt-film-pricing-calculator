@@ -32,6 +32,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { parseCityStateZip } from "@/lib/address";
+import { INSTALL_ONLY_RATE_PER_CHARGED_SF } from "@/lib/pricingData";
 import { planEstimateLines } from "@/lib/estimateLines";
 import { resolveBooksCustomerLink } from "@/lib/booksCustomerLink";
 import {
@@ -346,7 +347,7 @@ export async function POST(request: NextRequest) {
       installationState: installParsed.state,
       installationZip: installParsed.zip,
       notes: body.installOnly
-        ? "Install only — customer supplies the film. No film material charge."
+        ? `Install only — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot. No film material charge.`
         : undefined,
     });
 

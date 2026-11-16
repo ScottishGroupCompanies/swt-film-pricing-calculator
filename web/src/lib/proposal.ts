@@ -1,5 +1,6 @@
 // Client-side proposal/summary generation — no AI API needed
-import { fmt$, MIN_PRICE } from "./pricingData";
+import { additionalChargeHeading } from "./additionalCharges";
+import { fmt$, INSTALL_ONLY_RATE_PER_CHARGED_SF, MIN_PRICE } from "./pricingData";
 
 // $ amount with an explicit +/− sign instead of fmt$'s native "$-X" on negatives.
 const signed$ = (n: number): string => `${n >= 0 ? "+" : "−"}${fmt$(Math.abs(n))}`;
@@ -159,7 +160,7 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
     : "";
   const chargeRows = (d.additionalCharges || [])
     .filter((charge) => charge.amount !== 0)
-    .map((charge) => moneyRow(charge.name, charge.description, charge.amount))
+    .map((charge) => moneyRow(additionalChargeHeading(charge), "", charge.amount))
     .join("");
 
   const feeRow = d.feeAmount != null && d.feeAmount > 0 ? `
@@ -319,7 +320,7 @@ export function buildCustomerProposal(d: ProposalData): string {
 
   const chargeLines = (d.additionalCharges || [])
     .filter((charge) => charge.amount !== 0)
-    .map((charge) => `\n  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}`)
+    .map((charge) => `\n  ${additionalChargeHeading(charge)} — ${fmt$(charge.amount)}`)
     .join("");
   const hasAdjustments = (d.discount && d.discount > 0) || (d.bulkDiscount && d.bulkDiscount > 0) || chargeLines || d.installOnly || (d.feeAmount != null) || (d.deposit && d.deposit > 0);
   const adjustmentLines = hasAdjustments
@@ -355,7 +356,7 @@ ${minNote}
 ────────────────────────────────${adjustmentLines || `\n  TOTAL: ${fmt$(d.total)}`}
 
 This proposal is valid for 30 days from the date above.
-${d.installOnly ? "Install only. The customer supplies the film. No film material is included. Installation labor is priced at the standard $/SF for the selected film." : "Pricing includes professional installation of premium window film."}
+${d.installOnly ? `Install only. The customer supplies the film. Film material is $0. Installation labor is ${fmt$(INSTALL_ONLY_RATE_PER_CHARGED_SF)} per charged square foot.` : "Pricing includes professional installation of premium window film."}
 Contact your sales representative to proceed or request modifications.`;
 }
 
@@ -373,7 +374,7 @@ export function buildInternalRecord(d: ProposalData): string {
 
   const chargeLines = (d.additionalCharges || [])
     .filter((charge) => charge.amount !== 0)
-    .map((charge) => `  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}\n`)
+    .map((charge) => `  ${additionalChargeHeading(charge)} — ${fmt$(charge.amount)}\n`)
     .join("");
   const adjustmentBreakdown =
     `  ${d.installOnly ? "Labor total" : "Film Total"}: ${fmt$(d.total)}\n` +
@@ -391,7 +392,7 @@ export function buildInternalRecord(d: ProposalData): string {
 Customer: ${d.customer || "—"}
 Address: ${d.address || "—"}
 ${contactLines ? contactLines + "\n" : ""}User: ${d.userName || "—"} (${d.userLoc || "—"})
-Min dimension: ${d.minDim}" | Min job price: $${MIN_PRICE}
+Min job price: $${MIN_PRICE}
 
 LINE ITEMS:
 ${lines}
@@ -600,7 +601,7 @@ export function buildCommissionSheetHTML(d: ProposalData, extras: CommissionShee
       <tr><td class="label" colspan="2">${d.installOnly ? "Labor total" : "Film Total"}</td><td class="value">${fmt$(d.total)}</td></tr>
       ${d.installOnly ? `<tr><td class="label" colspan="2">Film material</td><td class="value">$0.00</td></tr>` : ""}
       ${d.bulkDiscount && d.bulkDiscount > 0 ? `<tr><td class="label" colspan="2">${esc(d.bulkDiscountLabel || "Bulk film discount")}</td><td class="value">−${fmt$(d.bulkDiscount)}</td></tr>` : ""}
-      ${(d.additionalCharges || []).filter((charge) => charge.amount !== 0).map((charge) => `<tr><td class="label" colspan="2">${esc(charge.name)}: ${esc(charge.description)}</td><td class="value">${fmt$(charge.amount)}</td></tr>`).join("")}
+      ${(d.additionalCharges || []).filter((charge) => charge.amount !== 0).map((charge) => `<tr><td class="label" colspan="2">${esc(additionalChargeHeading(charge))}</td><td class="value">${fmt$(charge.amount)}</td></tr>`).join("")}
       <tr><td class="check">${attachmentIsOther ? "" : "✓"}</td><td class="label">C-Bond</td><td class="value"></td></tr>
       <tr><td class="check">${attachmentIsOther ? "✓" : ""}</td><td class="label">Other</td><td class="value">${attachmentOtherAmt ? fmt$(attachmentOtherAmt) : ""}</td></tr>
       <tr><td class="label" colspan="2">Subtotal</td><td class="value">${fmt$(subtotal)}</td></tr>
@@ -644,7 +645,7 @@ export function buildCommissionSheet(d: ProposalData): string {
 
   const chargeLines = (d.additionalCharges || [])
     .filter((charge) => charge.amount !== 0)
-    .map((charge) => `  ${charge.name}: ${charge.description} — ${fmt$(charge.amount)}\n`)
+    .map((charge) => `  ${additionalChargeHeading(charge)} — ${fmt$(charge.amount)}\n`)
     .join("");
   const financials =
     `  ${d.installOnly ? "Labor total" : "Film Total"}: ${fmt$(d.total)}\n` +
