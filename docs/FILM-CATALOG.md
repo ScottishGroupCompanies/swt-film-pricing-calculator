@@ -324,6 +324,4 @@ All films are organized by brand. Each entry shows: Film Name | Film Cost $/SF |
 
 ## LLumar
 
-| Film | Notes |
-|------|-------|
-| LLumar — Custom / Other | No default pricing group. Set group manually per job. |
+Custom / Other is not a Llumar film. Reps add it as its own charge line, with a description and an amount.

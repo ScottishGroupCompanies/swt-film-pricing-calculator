@@ -349,7 +349,6 @@ export const FILMS: Film[] = [
   { name: "Mini Blinds - Graphic Patterns", psf: 2.94, pg: 4, brand: "Llumar" },
   { name: "White Wood Grain - Graphic Patterns", psf: 2.94, pg: 4, brand: "Llumar" },
   { name: "Metro - Graphic Patterns", psf: 2.94, pg: 4, brand: "Llumar" },
-  { name: "Custom / Other", psf: null, pg: null, brand: "Llumar" },
 ];
 
 export const BRANDS = ["Vista", "3M", "Huper", "Llumar"];
