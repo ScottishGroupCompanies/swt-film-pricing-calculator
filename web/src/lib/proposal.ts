@@ -1,6 +1,6 @@
 // Client-side proposal/summary generation — no AI API needed
 import { additionalChargeHeading } from "./additionalCharges";
-import { fmt$, INSTALL_ONLY_RATE_PER_CHARGED_SF, MIN_PRICE } from "./pricingData";
+import { fmt$, INSTALL_ONLY_RATE_PER_SQ_FT, MIN_PRICE } from "./pricingData";
 
 // $ amount with an explicit +/− sign instead of fmt$'s native "$-X" on negatives.
 const signed$ = (n: number): string => `${n >= 0 ? "+" : "−"}${fmt$(Math.abs(n))}`;
@@ -118,7 +118,7 @@ const TERMS_AND_CONDITIONS_HTML = `
 
 /**
  * Branded proposal/estimate HTML — matches the standard SWT proposal layout
- * (green diagonal "Accepted" ribbon, logo, Bill To / Installation Address /
+ * (logo, Bill To / Installation Address /
  * Quote Date / Salesperson / Payment Terms, itemized table, Sub Total /
  * Total, Notes, Terms & Conditions). Shared by the in-app "Generate
  * Proposal" print/download flow AND the Zoho estimate PDF generator, so
@@ -188,14 +188,6 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
 <style>
   @page { margin: 0; }
   body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #333; margin: 0; padding: 48px 56px; position: relative; max-width: 800px; margin-left: auto; margin-right: auto; }
-  .ribbon {
-    position: absolute; top: 0; left: 0; width: 90px; height: 90px; overflow: hidden;
-  }
-  .ribbon span {
-    position: absolute; display: block; width: 160px; padding: 6px 0; background: ${BRAND.green};
-    box-shadow: 0 2px 6px rgba(0,0,0,.15); color: #fff; text-align: center; font-size: 12px; font-weight: 700;
-    letter-spacing: 0.05em; left: -38px; top: 24px; transform: rotate(-45deg);
-  }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; margin-top: 20px; }
   .logo-block { display: flex; align-items: center; gap: 8px; }
   .logo-text { font-size: 22px; font-weight: 800; color: ${BRAND.darkGray}; letter-spacing: 0.02em; }
@@ -233,8 +225,6 @@ export function buildPrintableHTML(d: ProposalData, quoteNumber?: string): strin
 </style>
 </head>
 <body>
-  <div class="ribbon"><span>Accepted</span></div>
-
   <div class="header">
     <div>
       <div class="logo-block">
@@ -357,7 +347,7 @@ ${minNote}
 ────────────────────────────────${adjustmentLines || `\n  TOTAL: ${fmt$(d.total)}`}
 
 This proposal is valid for 30 days from the date above.
-${d.installOnly ? `Install only. The customer supplies the film. Film material is $0. Installation labor is ${fmt$(INSTALL_ONLY_RATE_PER_CHARGED_SF)} per charged square foot.` : "Pricing includes professional installation of premium window film."}
+${d.installOnly ? `Install only. The customer supplies the film. Film material is $0. Installation labor is ${fmt$(INSTALL_ONLY_RATE_PER_SQ_FT)} per exact square foot.` : "Pricing includes professional installation of premium window film."}
 Contact your sales representative to proceed or request modifications.`;
 }
 
@@ -367,7 +357,9 @@ export function buildInternalRecord(d: ProposalData): string {
     ` | Film: ${l.film || "—"} (${l.brand || "—"})` +
     ` | Grp ${l.pg} · ${l.psf != null ? "$" + l.psf.toFixed(2) + "/SF" : "—"}` +
     ` | ${l.rollW}" roll` +
-    ` | ${l.chargedSF?.toFixed(2)} charged SF (${l.actualSF?.toFixed(2)} actual, ${l.wastageSF?.toFixed(2)} wastage)` +
+    (d.installOnly
+      ? ` | ${l.actualSF?.toFixed(2)} exact SF`
+      : ` | ${l.chargedSF?.toFixed(2)} charged SF (${l.actualSF?.toFixed(2)} actual, ${l.wastageSF?.toFixed(2)} wastage)`) +
     ` | Line: ${fmt$(l.lineTotal)}${d.installOnly ? " | Install only — customer supplies film" : ""}`
   ).join("\n");
 

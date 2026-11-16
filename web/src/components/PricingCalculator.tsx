@@ -3,7 +3,8 @@
 import { useState, useCallback, useMemo, useRef, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import {
-  PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT, INSTALL_ONLY_RATE_PER_CHARGED_SF,
+  PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT,
+  INSTALL_ONLY_RATE_PER_SQ_FT, exactWindowSqFt, installOnlyLaborTotal,
   FILMS, BRANDS, BRAND_COLORS,
   fmt$, fmtSF, getCommRate, calcRowGeometry, newRow, initials,
   type User, type Film, type RowData, type RowCalc,
@@ -1002,14 +1003,32 @@ export default function PricingCalculator() {
       const geo = calcRowGeometry(row, minDim);
       if (!geo) return null;
       const pg = row.pgOverride ?? row.film?.pg ?? null;
-      // Install-only labor is a flat rate per charged square foot. Film and
-      // pricing group do not change it. Supply-and-install still uses the group rate.
-      const psf = installOnly ? INSTALL_ONLY_RATE_PER_CHARGED_SF : (pg ? PRICING_GROUPS[pg] : null);
-      const calculatedLineTotal = psf != null ? geo.chargedSF * psf : null;
+      // Install-only labor is $10 × the window's exact measured area.
+      // Roll waste and the 8" film minimum are not applied.
+      const rawW = parseFloat(row.w);
+      const rawH = parseFloat(row.h);
+      const exactSF = exactWindowSqFt(rawW, rawH, geo.qty);
+      const psf = installOnly ? INSTALL_ONLY_RATE_PER_SQ_FT : (pg ? PRICING_GROUPS[pg] : null);
+      const calculatedLineTotal = installOnly
+        ? installOnlyLaborTotal(exactSF)
+        : (psf != null ? geo.chargedSF * psf : null);
       const overrideVal = row.lineTotalOverride.trim() !== "" ? parseFloat(row.lineTotalOverride) : null;
       const isOverridden = overrideVal != null && !isNaN(overrideVal);
       const lineTotal = isOverridden ? overrideVal : calculatedLineTotal;
-      return { ...geo, pg, psf, lineTotal, calculatedLineTotal, isOverridden };
+      if (!installOnly) return { ...geo, pg, psf, lineTotal, calculatedLineTotal, isOverridden };
+      return {
+        ...geo,
+        w: rawW,
+        h: rawH,
+        actualSF: exactSF,
+        chargedSF: exactSF,
+        wastageSF: 0,
+        pg,
+        psf,
+        lineTotal,
+        calculatedLineTotal,
+        isOverridden,
+      };
     });
   }, [rows, minDim, installOnly]);
 
@@ -1031,8 +1050,8 @@ export default function PricingCalculator() {
 
     // Film total (after the $250 minimum) → bulk film discount → manual
     // discount % → attachment/other and additional charges → fee.
-    // Install-only labor is already in filmTotal at INSTALL_ONLY_RATE_PER_CHARGED_SF
-    // per charged square foot. The $250 minimum still applies above.
+    // Install-only labor is already in filmTotal at $10 per exact square foot.
+    // The $250 job minimum still applies. Film roll waste does not.
     const filmTotal = total ?? 0;
     const commRate = user ? getCommRate(user) : null;
     const adjustments = quoteAdjustments({
@@ -1233,11 +1252,14 @@ export default function PricingCalculator() {
       });
       const data = await resp.json();
 
-      if (data.success) {
+      if (data.success && data.dealId) {
         setZohoResult(data);
         setZohoStatus("success");
       } else {
-        setZohoResult(data);
+        const errors = Array.isArray(data.errors) && data.errors.length
+          ? data.errors
+          : [data.error || "Zoho did not create an opportunity."];
+        setZohoResult({ ...data, errors });
         setZohoStatus("error");
       }
     } catch (e) {
@@ -1460,7 +1482,7 @@ export default function PricingCalculator() {
             </button>
             {installOnly && (
               <p style={{ fontSize: 12, color: THEME.textMuted, margin: "0 0 12px" }}>
-                {`Film material is $0. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot for every film. The $250 minimum still applies.`}
+                {`Film material is $0. Installation labor is $${INSTALL_ONLY_RATE_PER_SQ_FT.toFixed(2)} per exact square foot (measured area, no waste). The $250 job minimum still applies.`}
               </p>
             )}
 
@@ -1703,7 +1725,7 @@ export default function PricingCalculator() {
               <p style={{ ...labelSt, marginBottom: 4 }}>Window Line Items</p>
               <p style={{ fontSize: 12, color: THEME.textMuted, marginBottom: 0 }}>
                 {installOnly
-                  ? `Install only. Labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot, no matter which film is selected. Film material is not charged.`
+                  ? `Install only. Labor is $${INSTALL_ONLY_RATE_PER_SQ_FT.toFixed(2)} per exact square foot of the measured window. Film waste is not added.`
                   : "Each row can use a different film. Enter width, height, and quantity to calculate pricing."}
               </p>
             </div>
@@ -2095,9 +2117,13 @@ export default function PricingCalculator() {
             }}>
               {([
                 ["Windows", totals.winCount || "—"],
-                ["Actual SF", totals.totalActual > 0 ? fmtSF(totals.totalActual) : "—"],
-                ["Charged SF", totals.totalCharged > 0 ? fmtSF(totals.totalCharged) : "—"],
-                ["Wastage", totals.totalCharged > 0 ? fmtSF(totals.totalCharged - totals.totalActual) : "—"],
+                ...(installOnly
+                  ? [["Exact SF", totals.totalActual > 0 ? fmtSF(totals.totalActual) : "—"] as [string, string | number]]
+                  : [
+                      ["Actual SF", totals.totalActual > 0 ? fmtSF(totals.totalActual) : "—"] as [string, string | number],
+                      ["Charged SF", totals.totalCharged > 0 ? fmtSF(totals.totalCharged) : "—"] as [string, string | number],
+                      ["Wastage", totals.totalCharged > 0 ? fmtSF(totals.totalCharged - totals.totalActual) : "—"] as [string, string | number],
+                    ]),
                 ["Subtotal", totals.rawTotal ? fmt$(totals.rawTotal) : "—"],
                 ...(totals.minAdj > 0 ? [["Min adjustment", `+${fmt$(totals.minAdj)}`] as [string, string | number]] : []),
               ]).map(([l, v]) => (

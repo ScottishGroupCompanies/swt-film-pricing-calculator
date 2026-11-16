@@ -19,7 +19,8 @@ import {
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { findUserById } from "@/lib/auth";
 import { additionalChargeHeading } from "@/lib/additionalCharges";
-import { INSTALL_ONLY_RATE_PER_CHARGED_SF } from "@/lib/pricingData";
+import { INSTALL_ONLY_RATE_PER_SQ_FT } from "@/lib/pricingData";
+import { zohoSubmitResult } from "@/lib/zohoSubmitResult";
 import { resolveDealOwner } from "@/lib/zohoOwners";
 import { resolveOpportunityStage } from "@/lib/opportunityStage";
 
@@ -121,6 +122,29 @@ export async function POST(request: NextRequest) {
 
     const isCommercial = body.jobType === "Commercial";
 
+    // Owner is the logged-in rep. Resolve it before any CRM create so a
+    // failed opportunity does not leave an Account and Contact owned by
+    // the API user (Jenny).
+    let ownerId: string;
+    try {
+      const sessionUserId = await getSessionUserId();
+      const sessionUser = sessionUserId ? findUserById(sessionUserId) : null;
+      if (!sessionUser) {
+        return NextResponse.json(
+          { success: false, errors: ["Deal creation failed: no logged-in rep, so Zoho records were not created."] },
+          { status: 401 },
+        );
+      }
+      ownerId = (await resolveDealOwner(sessionUser, findCrmUserIdByEmail)).id;
+    } catch (e) {
+      return NextResponse.json(
+        { success: false, errors: [`Deal creation failed: ${e instanceof Error ? e.message : String(e)}`] },
+        { status: 500 },
+      );
+    }
+
+    let createdNewContact = false;
+
     // ── 1. Resolve Contact in CRM (reuse existing, or find/create) ─────
     // Runs BEFORE Account resolution: for Residential jobs, the Account we
     // link is whatever Zoho already auto-created/linked for this exact
@@ -173,7 +197,9 @@ export async function POST(request: NextRequest) {
             mailingCity,
             mailingState,
             mailingZip,
+            ownerZohoUserId: ownerId,
           });
+          createdNewContact = true;
           // Re-fetch so we can read back the Account_Name Zoho auto-linked
           // on creation (needed below for Residential Account resolution).
           contact = (await getRecord("Contacts", newContactId)) || { id: newContactId };
@@ -188,6 +214,16 @@ export async function POST(request: NextRequest) {
       }
     } catch (e) {
       results.errors.push(`Contact creation failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Zoho auto-creates a personal account for a new contact, owned by the
+    // API user. Move that account to the rep before anything else uses it.
+    if (createdNewContact && results.accountId) {
+      try {
+        await updateRecord("Accounts", results.accountId, { Owner: { id: ownerId } });
+      } catch (e) {
+        results.errors.push(`Could not assign the account to the rep: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     // ── 2. Resolve Account — REQUIRED for every job, not just Commercial.
@@ -218,6 +254,7 @@ export async function POST(request: NextRequest) {
             billingCity: city,
             billingState: state,
             billingZip: zip,
+            ownerZohoUserId: ownerId,
           });
         }
       } catch (e) {
@@ -243,6 +280,7 @@ export async function POST(request: NextRequest) {
             billingCity: city,
             billingState: state,
             billingZip: zip,
+            ownerZohoUserId: ownerId,
           });
         }
       } catch (e) {
@@ -296,14 +334,6 @@ export async function POST(request: NextRequest) {
       const dealDescription = buildDealDescription({ ...body, opportunityStage: stage });
       const { city: installCity, state: installState, zip: installZip } = parseCityStateZip(body.cityStateZip);
 
-      // Owner = the logged-in rep, from the server session (never the client).
-      // Reps with a stored id keep it. Katie is resolved from her CRM email.
-      const sessionUserId = await getSessionUserId();
-      const sessionUser = sessionUserId ? findUserById(sessionUserId) : null;
-      const owner = sessionUser
-        ? await resolveDealOwner(sessionUser, findCrmUserIdByEmail)
-        : null;
-
       const dealResult = await createDeal({
         dealName,
         contactId: results.contactId || undefined,
@@ -312,7 +342,7 @@ export async function POST(request: NextRequest) {
         stage,
         description: dealDescription,
         userName: body.userName,
-        ownerZohoUserId: owner?.id,
+        ownerZohoUserId: ownerId,
         jobType: body.jobType,
         installationStreet: body.address,
         installationCity: installCity,
@@ -383,9 +413,16 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Result ────────────────────────────────────────────────────────
-    results.success = results.contactId != null || results.dealId != null;
+    // A contact without an opportunity is a failed send. The UI must show
+    // the deal error instead of a green success.
+    const outcome = zohoSubmitResult({
+      dealId: results.dealId,
+      errors: results.errors,
+    });
+    results.success = outcome.success;
+    results.errors = outcome.errors;
 
-    return NextResponse.json(results, { status: results.success ? 200 : 500 });
+    return NextResponse.json(results, { status: outcome.status });
   } catch (e) {
     return NextResponse.json(
       { success: false, error: e instanceof Error ? e.message : "Internal server error" },
@@ -406,7 +443,7 @@ function buildDealDescription(data: SubmitPricingRequest): string {
     .map((charge) => `  • ${additionalChargeHeading(charge)} — ${fmt$(charge.amount)}`)
     .join("\n");
 
-  return `${data.installOnly ? `INSTALL ONLY — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot. No film material charge.\n` : ""}Window Film Pricing — ${data.date}
+  return `${data.installOnly ? `INSTALL ONLY — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_SQ_FT.toFixed(2)} per exact square foot. No film material charge.\n` : ""}Window Film Pricing — ${data.date}
 User: ${data.userName} (${data.userLoc})
 Job Type: ${data.jobType || "Residential"}${data.installOnly ? " | Install only" : ""}
 Stage: ${resolveOpportunityStage(data.opportunityStage)}
@@ -438,7 +475,7 @@ function buildNoteContent(data: SubmitPricingRequest): string {
     .join("\n");
 
   return `PRICING DETAIL — ${data.date}
-${data.installOnly ? `INSTALL ONLY — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_CHARGED_SF.toFixed(2)} per charged square foot. No film material charge.\n` : ""}
+${data.installOnly ? `INSTALL ONLY — customer supplies the film. Installation labor is $${INSTALL_ONLY_RATE_PER_SQ_FT.toFixed(2)} per exact square foot. No film material charge.\n` : ""}
 Customer: ${data.customer}
 Address: ${data.address}${data.cityStateZip ? `, ${data.cityStateZip}` : ""}
 ${data.phone ? `Phone: ${data.phone}\n` : ""}${data.email ? `Email: ${data.email}\n` : ""}User: ${data.userName} (${data.userLoc})

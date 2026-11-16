@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   NEW_OPPORTUNITY_STAGE,
   OPPORTUNITY_STAGES,
+  crmOwner,
+  opportunityStageApiValue,
   resolveOpportunityStage,
 } from "./opportunityStage.ts";
 
@@ -25,8 +27,17 @@ test("each picklist display value is sent unchanged", () => {
   }
 });
 
-test("old actual values are not sent", () => {
+test("the dropdown keeps display names and the API gets the actual value", () => {
   assert.equal(resolveOpportunityStage("Qualification"), "Discovery");
-  assert.equal(resolveOpportunityStage("Value Proposition"), "Discovery");
-  assert.equal(resolveOpportunityStage("Closed Lost to Competition"), "Discovery");
+  assert.equal(opportunityStageApiValue("Discovery"), "Qualification");
+  assert.equal(opportunityStageApiValue("DNQ"), "Closed Lost to Competition");
+  assert.equal(opportunityStageApiValue("Proposal"), "Value Proposition");
+  assert.equal(opportunityStageApiValue("Closed Won"), "Closed Won");
+  assert.equal(opportunityStageApiValue("Closed Lost"), "Closed Lost");
+});
+
+test("the logged-in rep is the Owner on CRM records", () => {
+  const amy = "6168763000003573001";
+  assert.deepEqual(crmOwner(amy), { id: amy });
+  assert.equal(crmOwner(undefined), undefined);
 });

@@ -21,7 +21,7 @@ import {
 } from "./address";
 import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustomerLink";
 import { booksLineItemBody } from "./booksEstimatePayload";
-import { NEW_OPPORTUNITY_STAGE } from "./opportunityStage";
+import { crmOwner, opportunityStageApiValue, resolveOpportunityStage } from "./opportunityStage";
 import { matchUserIdByEmail } from "./zohoOwners";
 
 export {
@@ -308,7 +308,7 @@ export async function searchAccountsFuzzy(query: string, limit = 10): Promise<Zo
 /**
  * Create a new contact in Zoho CRM
  */
-export async function createContact(contact: {
+export function buildContactRecord(contact: {
   firstName?: string;
   lastName: string;
   email?: string;
@@ -317,8 +317,9 @@ export async function createContact(contact: {
   mailingCity?: string;
   mailingState?: string;
   mailingZip?: string;
-  accountId?: string; // Commercial: real Zoho Account record id to link (Contact.Account_Name lookup)
-}): Promise<string> {
+  accountId?: string;
+  ownerZohoUserId?: string;
+}): ZohoCRMRecord {
   const record: ZohoCRMRecord = {
     Last_Name: contact.lastName,
   };
@@ -330,8 +331,26 @@ export async function createContact(contact: {
   if (contact.mailingState) record.Mailing_State = contact.mailingState;
   if (contact.mailingZip) record.Mailing_Zip = contact.mailingZip;
   if (contact.accountId) record.Account_Name = { id: contact.accountId };
+  const contactOwner = crmOwner(contact.ownerZohoUserId);
+  if (contactOwner) record.Owner = contactOwner;
+  return record;
+}
 
-  const result = await crmApiCall("POST", "/Contacts", { data: [record] }) as { data?: { details?: { id?: string } }[] };
+export async function createContact(contact: {
+  firstName?: string;
+  lastName: string;
+  email?: string;
+  phone?: string;
+  mailingStreet?: string;
+  mailingCity?: string;
+  mailingState?: string;
+  mailingZip?: string;
+  accountId?: string; // Commercial: real Zoho Account record id to link (Contact.Account_Name lookup)
+  ownerZohoUserId?: string;
+}): Promise<string> {
+  const record = buildContactRecord(contact);
+
+  const result = await crmApiCall("POST", "/Contacts", { data: [record] }) as { data?: { details?: { id?: string }; message?: string; code?: string; status?: string }[] };
   const id = result?.data?.[0]?.details?.id;
   if (!id) throw new Error("Failed to create contact: no ID returned");
   return id;
@@ -356,7 +375,7 @@ export async function searchAccount(name: string): Promise<ZohoCRMRecord | null>
  * Account_Name, Phone, Email, Website, Billing_Street, Billing_City,
  * Billing_Code (zip), Billing_State1, Commercial_Account_Type_WT_and_HI.
  */
-export async function createAccount(account: {
+export function buildAccountRecord(account: {
   accountName: string;
   phone?: string;
   email?: string;
@@ -365,7 +384,8 @@ export async function createAccount(account: {
   billingCity?: string;
   billingState?: string;
   billingZip?: string;
-}): Promise<string> {
+  ownerZohoUserId?: string;
+}): ZohoCRMRecord {
   const record: ZohoCRMRecord = {
     Account_Name: account.accountName,
   };
@@ -376,11 +396,65 @@ export async function createAccount(account: {
   if (account.billingCity) record.Billing_City = account.billingCity;
   if (account.billingState) record.Billing_State1 = account.billingState;
   if (account.billingZip) record.Billing_Code = account.billingZip;
+  const accountOwner = crmOwner(account.ownerZohoUserId);
+  if (accountOwner) record.Owner = accountOwner;
+  return record;
+}
+
+export async function createAccount(account: {
+  accountName: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  billingStreet?: string;
+  billingCity?: string;
+  billingState?: string;
+  billingZip?: string;
+  ownerZohoUserId?: string;
+}): Promise<string> {
+  const record = buildAccountRecord(account);
 
   const result = await crmApiCall("POST", "/Accounts", { data: [record] }) as { data?: { details?: { id?: string } }[] };
   const id = result?.data?.[0]?.details?.id;
   if (!id) throw new Error("Failed to create account: no ID returned");
   return id;
+}
+
+/**
+ * Deal payload. Stage is the CRM picklist actual value, not the display name.
+ * Owner is the logged-in rep's Zoho user id.
+ */
+export function buildDealRecord(deal: {
+  dealName: string;
+  contactId?: string;
+  accountId?: string;
+  amount: number;
+  stage?: string;
+  description?: string;
+  userName?: string;
+  ownerZohoUserId?: string;
+  jobType?: "Residential" | "Commercial";
+  installationStreet?: string;
+  installationCity?: string;
+  installationState?: string;
+  installationZip?: string;
+}): ZohoCRMRecord {
+  const record: ZohoCRMRecord = {
+    Deal_Name: deal.dealName,
+    Amount: deal.amount,
+    Stage: opportunityStageApiValue(resolveOpportunityStage(deal.stage)),
+  };
+  if (deal.contactId) record.Contact_Name = { id: deal.contactId };
+  if (deal.accountId) record.Account_Name = { id: deal.accountId };
+  if (deal.description) record.Description = deal.description;
+  if (deal.jobType) record.Type = deal.jobType;
+  if (deal.installationStreet) record.Installation_Street = deal.installationStreet;
+  if (deal.installationCity) record.Installation_City = deal.installationCity;
+  if (deal.installationState) record.Installation_State = deal.installationState;
+  if (deal.installationZip) record.Installation_Zip = deal.installationZip;
+  const dealOwner = crmOwner(deal.ownerZohoUserId);
+  if (dealOwner) record.Owner = dealOwner;
+  return record;
 }
 
 /**
@@ -405,26 +479,16 @@ export async function createDeal(deal: {
   installationState?: string;
   installationZip?: string;
 }): Promise<{ id: string; record: ZohoCRMRecord; opportunityNumber: string | null }> {
-  const record: ZohoCRMRecord = {
-    Deal_Name: deal.dealName,
-    Amount: deal.amount,
-    Stage: deal.stage || NEW_OPPORTUNITY_STAGE,
+  const record = buildDealRecord(deal);
+  const result = await crmApiCall("POST", "/Deals", { data: [record] }) as {
+    data?: { details?: { id?: string }; message?: string; code?: string; status?: string }[];
   };
-  // Zoho expects Contact_Name as an object with id, not a plain string
-  if (deal.contactId) record.Contact_Name = { id: deal.contactId };
-  if (deal.accountId) record.Account_Name = { id: deal.accountId };
-  if (deal.description) record.Description = deal.description;
-  if (deal.jobType) record.Type = deal.jobType;
-  if (deal.installationStreet) record.Installation_Street = deal.installationStreet;
-  if (deal.installationCity) record.Installation_City = deal.installationCity;
-  if (deal.installationState) record.Installation_State = deal.installationState;
-  if (deal.installationZip) record.Installation_Zip = deal.installationZip;
-  // Owner is a user lookup — needs a real Zoho user ID, not a display name.
-  if (deal.ownerZohoUserId) record.Owner = { id: deal.ownerZohoUserId };
-
-  const result = await crmApiCall("POST", "/Deals", { data: [record] }) as { data?: { details?: { id?: string } }[] };
-  const id = result?.data?.[0]?.details?.id;
-  if (!id) throw new Error("Failed to create deal: no ID returned");
+  const row = result?.data?.[0];
+  const id = row?.details?.id;
+  if (!id) {
+    const why = [row?.code, row?.message].filter(Boolean).join(": ") || "no ID returned";
+    throw new Error(`Failed to create deal: ${why}`);
+  }
 
   // Fetch the full record back — auto-number fields are populated by Zoho
   // server-side after creation, they aren't returned in the create response.
