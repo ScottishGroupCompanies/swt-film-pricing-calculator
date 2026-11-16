@@ -11,14 +11,21 @@ export const ROLL_WIDTHS = [36, 48, 60, 72, 84, 96, 108, 120, 144];
 export const MIN_PRICE = 250;
 export const MIN_DIM_DEFAULT = 8;
 /**
- * Install-only labor rate. Multiplied by charged square feet (the same
- * basis as a supply-and-install line). Film and pricing group do not change it.
+ * Install-only labor rate. Multiplied by the window's exact measured
+ * square feet (width × height × qty ÷ 144). Film waste, roll-width
+ * rounding, and the 8" minimum dimension are not applied.
  */
-export const INSTALL_ONLY_RATE_PER_CHARGED_SF = 10;
+export const INSTALL_ONLY_RATE_PER_SQ_FT = 10;
 
-export function installOnlyLaborTotal(chargedSqFt: number): number {
-  if (!(chargedSqFt > 0)) return 0;
-  return chargedSqFt * INSTALL_ONLY_RATE_PER_CHARGED_SF;
+/** Exact measured area in square feet. Does not apply the film minimum dimension. */
+export function exactWindowSqFt(widthInches: number, heightInches: number, qty: number): number {
+  if (!(widthInches > 0) || !(heightInches > 0) || !(qty > 0)) return 0;
+  return (widthInches * heightInches * qty) / 144;
+}
+
+export function installOnlyLaborTotal(exactSqFt: number): number {
+  if (!(exactSqFt > 0)) return 0;
+  return exactSqFt * INSTALL_ONLY_RATE_PER_SQ_FT;
 }
 export const DEFAULT_FEE_PCT = 4; // 4% fee (editable per job)
 

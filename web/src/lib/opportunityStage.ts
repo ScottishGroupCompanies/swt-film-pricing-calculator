@@ -36,10 +36,34 @@ export const NEW_OPPORTUNITY_STAGE: OpportunityStage = "Discovery";
 /** Stage this app wrote before the list above. Kept so older deals can be recognized. */
 export const LEGACY_OPPORTUNITY_STAGE = "Qualification";
 
-/** Display value to send as Deal.Stage. Unknown input stays Discovery. */
+/** Display value chosen in the calculator. Unknown input stays Discovery. */
 export function resolveOpportunityStage(value: unknown): OpportunityStage {
   if (typeof value === "string" && (OPPORTUNITY_STAGES as readonly string[]).includes(value)) {
     return value as OpportunityStage;
   }
   return NEW_OPPORTUNITY_STAGE;
+}
+
+/**
+ * Value written to Deal.Stage on Zoho CRM v2.
+ * The API picklist actual_value differs from the name reps see.
+ * Sending the display name (for example "Discovery") is rejected, so the
+ * opportunity is not created. GET still returns the display name.
+ */
+export const OPPORTUNITY_STAGE_API_VALUES: Record<OpportunityStage, string> = {
+  Discovery: "Qualification",
+  DNQ: "Closed Lost to Competition",
+  Proposal: "Value Proposition",
+  "Closed Won": "Closed Won",
+  "Closed Lost": "Closed Lost",
+};
+
+export function opportunityStageApiValue(stage: OpportunityStage): string {
+  return OPPORTUNITY_STAGE_API_VALUES[stage];
+}
+
+/** Owner lookup written on Contact, Account, and Deal. */
+export function crmOwner(ownerZohoUserId?: string): { id: string } | undefined {
+  if (!ownerZohoUserId) return undefined;
+  return { id: ownerZohoUserId };
 }
