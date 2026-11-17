@@ -21,7 +21,8 @@ import {
 } from "./address";
 import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustomerLink";
 import { booksLineItemBody } from "./booksEstimatePayload";
-import { crmOwner, opportunityStageApiValue, resolveOpportunityStage } from "./opportunityStage";
+import { booksSalespersonRows, matchBooksSalesperson, stageValueToSend } from "@/config/reps";
+import { crmOwner, resolveOpportunityStage } from "./opportunityStage";
 import { matchUserIdByEmail } from "./zohoOwners";
 
 export {
@@ -421,8 +422,8 @@ export async function createAccount(account: {
 }
 
 /**
- * Deal payload. Stage is the CRM picklist actual value, not the display name.
- * Owner is the logged-in rep's Zoho user id.
+ * Deal payload. Stage is the picklist display value (Discovery, not
+ * Qualification). Owner is the logged-in rep's Zoho user id.
  */
 export function buildDealRecord(deal: {
   dealName: string;
@@ -442,7 +443,7 @@ export function buildDealRecord(deal: {
   const record: ZohoCRMRecord = {
     Deal_Name: deal.dealName,
     Amount: deal.amount,
-    Stage: opportunityStageApiValue(resolveOpportunityStage(deal.stage)),
+    Stage: stageValueToSend(resolveOpportunityStage(deal.stage)),
   };
   if (deal.contactId) record.Contact_Name = { id: deal.contactId };
   if (deal.accountId) record.Account_Name = { id: deal.accountId };
@@ -825,26 +826,16 @@ export async function booksApiCall(
  * Look up a Zoho Books salesperson by email so an estimate can be assigned
  * to that person (salesperson_id), not only labeled with a display name.
  */
+export async function listBooksSalespeople(orgId: string) {
+  const result = await booksApiCall("GET", "/salespersons", orgId);
+  return booksSalespersonRows(result);
+}
+
 export async function findBooksSalespersonByEmail(
   orgId: string,
   email: string,
 ): Promise<{ id: string; name: string } | null> {
-  const result = await booksApiCall("GET", "/salespersons", orgId) as {
-    salespersons?: {
-      salesperson_id?: string;
-      salesperson_name?: string;
-      salesperson_email?: string;
-      is_active?: boolean;
-    }[];
-  };
-  const want = email.trim().toLowerCase();
-  const match = (result?.salespersons || []).find((person) =>
-    person.is_active !== false
-    && (person.salesperson_email || "").trim().toLowerCase() === want
-    && person.salesperson_id
-  );
-  if (!match?.salesperson_id) return null;
-  return { id: String(match.salesperson_id), name: match.salesperson_name || "" };
+  return matchBooksSalesperson(await listBooksSalespeople(orgId), { email });
 }
 
 export interface BooksCustomerRecord extends LinkedBooksCustomer {

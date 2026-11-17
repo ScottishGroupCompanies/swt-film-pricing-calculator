@@ -199,11 +199,13 @@ There is no field on a single estimate that hides the column. Turn the preferenc
 
 ## Deal owner and estimate salesperson
 
-Each quote's Opportunity owner is the rep who is logged in. Dana, Blake, Mike, Jenny, and Admin keep the CRM user ids already stored with their logins. Those ids are not changed by this lookup.
+The committed ids and the Stage picklist are in [docs/ZOHO_MAPPING.md](../../docs/ZOHO_MAPPING.md) and `web/src/config/reps.ts`. An env var overrides one login. It is not required.
+
+Each quote's Opportunity owner is the rep who is logged in. Dana, Blake, Mike, Jenny, and Admin keep the CRM user ids in that file. Those ids are not changed by the email lookup.
 
 Katie logs in with PIN `0701`. Her CRM user id is `6168763000002178001`, confirmed from Setup → Users → Katie in org `848141664` (the id in that user's URL). Quotes she sends use that id as `Deal.Owner` with no env var required. If the token has `ZohoCRM.users.READ`, the app still looks up `katie@scottishwindowtinting.com` first and uses the id that lookup returns. If the lookup fails or the scope is missing, it falls back to `6168763000002178001`. The same email is used to find her Zoho Books salesperson, and that salesperson id is set on the estimate. If Books has no salesperson with that email, the estimate is still created and labeled with the name Katie, and the calculator shows a warning.
 
-Amy logs in with PIN `4321`. Her CRM user id is `6168763000003573001` in the same org. Quotes she sends follow the same order: `ZOHO_CRM_USER_ID_AMY` if set, otherwise the `amy@scottishwindowtinting.com` lookup, otherwise `6168763000003573001`. Her Books salesperson is that email, or `ZOHO_BOOKS_SALESPERSON_ID_AMY` when the lookup does not find her. The Zoho One directory id `675403000000047017` is not a CRM user id and is not used.
+Amy logs in with PIN `4321`. Her CRM user id is `6168763000003573001` in the same org. Quotes she sends follow the same order: `ZOHO_CRM_USER_ID_AMY` if set, otherwise the `amy@scottishwindowtinting.com` lookup, otherwise `6168763000003573001`. Her Books salesperson is Amy Haley (`4995712000004391009`). `ZOHO_BOOKS_SALESPERSON_ID_AMY` overrides that id. The Zoho One directory id `675403000000047017` is not a CRM user id and is not used.
 
 The lookup calls `GET /crm/v2/users` (search by email, then the active-user list). Books salesperson lookup uses the existing `ZohoBooks.fullaccess.all` scope (`GET /books/v3/salespersons`).
 

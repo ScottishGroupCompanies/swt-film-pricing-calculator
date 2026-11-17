@@ -38,12 +38,13 @@ import { resolveBooksCustomerLink } from "@/lib/booksCustomerLink";
 import {
   getBooksConfig, getRecord, getBooksCustomer, searchBooksItem, createBooksEstimate,
   findSyncedCrmEstimateRecord, booksCustomerLinkClient, updateBooksCustomerAddress,
-  ensureBooksContactPerson, findBooksSalespersonByEmail,
+  ensureBooksContactPerson, listBooksSalespeople,
   type BooksEstimateLineItem,
 } from "@/lib/zoho";
+import { resolveRepBooksSalesperson } from "@/config/reps";
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { findUserById } from "@/lib/auth";
-import { booksSalespersonIdEnvKey, readEnvUserOverride } from "@/lib/zohoOwners";
+import { booksSalespersonIdEnvKey } from "@/lib/zohoOwners";
 
 interface EstimateLine {
   desc: string;
@@ -303,34 +304,36 @@ export async function POST(request: NextRequest) {
     // on the Deal in submit-pricing/route.ts) — populates Books' own
     // "Installation Address" custom field so it's never blank/"null null
     // null" on the generated estimate.
-    // Salesperson follows the logged-in user. Katie and Amy are matched to
-    // the Books salesperson with their CRM email (or
-    // ZOHO_BOOKS_SALESPERSON_ID_<LOGIN>). Other reps keep the previous
-    // behavior: the estimate is labeled with their display name.
+    // Salesperson follows the logged-in user. An env id overrides the
+    // committed mapping. Otherwise the Books id in web/src/config/reps.ts
+    // is used (Amy Haley for Amy). A login with no committed id is matched
+    // on the live salesperson list by email, CRM user id, then name.
     const sessionUserId = await getSessionUserId();
     const sessionUser = sessionUserId ? findUserById(sessionUserId) : null;
     let salespersonName = sessionUser?.name || body.userName;
     let salespersonId: string | undefined;
     if (sessionUser) {
-      const envSalespersonId = readEnvUserOverride(sessionUser.id, process.env, "ZOHO_BOOKS_SALESPERSON_ID");
-      if (envSalespersonId) {
-        salespersonId = envSalespersonId;
-      } else if (sessionUser.zohoEmail) {
+      let salesperson = resolveRepBooksSalesperson(sessionUser.id, process.env);
+      if (!salesperson) {
         try {
-          const salesperson = await findBooksSalespersonByEmail(orgId, sessionUser.zohoEmail);
-          if (salesperson) {
-            salespersonId = salesperson.id;
-            if (salesperson.name) salespersonName = salesperson.name;
-          } else {
-            warnings.push(
-              `No Zoho Books salesperson matches ${sessionUser.zohoEmail}. The estimate uses the name "${salespersonName}". Add that email as a Books salesperson, or set ${booksSalespersonIdEnvKey(sessionUser.id)} to her salesperson id.`,
-            );
-          }
+          salesperson = resolveRepBooksSalesperson(
+            sessionUser.id,
+            process.env,
+            await listBooksSalespeople(orgId),
+          );
         } catch (e) {
           warnings.push(
-            `Could not look up the Zoho Books salesperson for ${sessionUser.zohoEmail} (${e instanceof Error ? e.message : String(e)}). The estimate uses the name "${salespersonName}". Set ${booksSalespersonIdEnvKey(sessionUser.id)} to assign her salesperson record.`,
+            `Could not look up the Zoho Books salesperson for ${sessionUser.name} (${e instanceof Error ? e.message : String(e)}). The estimate uses the name "${salespersonName}". Set ${booksSalespersonIdEnvKey(sessionUser.id)} to assign that salesperson record.`,
           );
         }
+      }
+      if (salesperson) {
+        salespersonId = salesperson.id;
+        if (salesperson.name) salespersonName = salesperson.name;
+      } else if (!warnings.some((warning) => warning.includes("Zoho Books salesperson"))) {
+        warnings.push(
+          `No Zoho Books salesperson matches ${sessionUser.name}. The estimate uses the name "${salespersonName}". Set ${booksSalespersonIdEnvKey(sessionUser.id)} to that salesperson id.`,
+        );
       }
     }
 
