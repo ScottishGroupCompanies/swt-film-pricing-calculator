@@ -1,17 +1,8 @@
 /**
- * Opportunity stages Jenny uses in Zoho CRM, verified read-only against
- * the Deals Stage picklist (display value, which is what the API stores
- * and returns). The picklist's actual_value is the old Zoho name and is
- * not what records use:
- *
- *   Discovery    actual_value Qualification
- *   DNQ          actual_value Closed Lost to Competition
- *   Proposal     actual_value Value Proposition
- *   Closed Lost  actual_value Closed Lost
- *   Closed Won   actual_value Closed Won
- *
- * Sending "Qualification" creates a stage that is not one of those
- * filters. This app used to do that.
+ * Opportunity stages shown in the calculator. The value written to
+ * Deal.Stage is the display name from web/src/config/reps.ts. The
+ * picklist actual_value (Qualification, and the other old names) is
+ * stored as that old name, which is what the deal page shows.
  */
 export const OPPORTUNITY_STAGES = [
   "Discovery",
@@ -42,24 +33,6 @@ export function resolveOpportunityStage(value: unknown): OpportunityStage {
     return value as OpportunityStage;
   }
   return NEW_OPPORTUNITY_STAGE;
-}
-
-/**
- * Value written to Deal.Stage on Zoho CRM v2.
- * The API picklist actual_value differs from the name reps see.
- * Sending the display name (for example "Discovery") is rejected, so the
- * opportunity is not created. GET still returns the display name.
- */
-export const OPPORTUNITY_STAGE_API_VALUES: Record<OpportunityStage, string> = {
-  Discovery: "Qualification",
-  DNQ: "Closed Lost to Competition",
-  Proposal: "Value Proposition",
-  "Closed Won": "Closed Won",
-  "Closed Lost": "Closed Lost",
-};
-
-export function opportunityStageApiValue(stage: OpportunityStage): string {
-  return OPPORTUNITY_STAGE_API_VALUES[stage];
 }
 
 /** Owner lookup written on Contact, Account, and Deal. */

@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  DEAL_STAGE_PICKLIST,
+  stageValueToSend,
+} from "../config/reps.ts";
+import {
   NEW_OPPORTUNITY_STAGE,
   OPPORTUNITY_STAGES,
   crmOwner,
-  opportunityStageApiValue,
   resolveOpportunityStage,
 } from "./opportunityStage.ts";
 
@@ -27,13 +30,18 @@ test("each picklist display value is sent unchanged", () => {
   }
 });
 
-test("the dropdown keeps display names and the API gets the actual value", () => {
+test("Deal.Stage is the display name, not the picklist actual value", () => {
   assert.equal(resolveOpportunityStage("Qualification"), "Discovery");
-  assert.equal(opportunityStageApiValue("Discovery"), "Qualification");
-  assert.equal(opportunityStageApiValue("DNQ"), "Closed Lost to Competition");
-  assert.equal(opportunityStageApiValue("Proposal"), "Value Proposition");
-  assert.equal(opportunityStageApiValue("Closed Won"), "Closed Won");
-  assert.equal(opportunityStageApiValue("Closed Lost"), "Closed Lost");
+  assert.deepEqual(
+    DEAL_STAGE_PICKLIST.map((entry) => entry.display).sort(),
+    [...OPPORTUNITY_STAGES].sort(),
+  );
+  assert.equal(stageValueToSend("Discovery"), "Discovery");
+  assert.equal(stageValueToSend("DNQ"), "DNQ");
+  assert.equal(stageValueToSend("Proposal"), "Proposal");
+  assert.equal(stageValueToSend("Closed Won"), "Closed Won");
+  assert.equal(stageValueToSend("Closed Lost"), "Closed Lost");
+  assert.equal(DEAL_STAGE_PICKLIST.find((entry) => entry.display === "Discovery")?.actual, "Qualification");
 });
 
 test("the logged-in rep is the Owner on CRM records", () => {
