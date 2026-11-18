@@ -4,7 +4,9 @@ import { decryptRefreshToken, encryptRefreshToken } from "./zohoTokenCrypto.ts";
 import {
   ZOHO_OAUTH_SCOPES,
   buildZohoAuthorizeUrl,
+  connectOAuthClient,
   exchangeAuthorizationCode,
+  orgOAuthClient,
   signOAuthState,
   verifyOAuthState,
   zohoRefreshIsRevoked,
@@ -18,6 +20,36 @@ test("a refresh token encrypts to something that is not the token", () => {
   assert.equal(JSON.stringify(encrypted).includes(token), false);
   assert.equal(decryptRefreshToken(encrypted, SECRET), token);
   assert.throws(() => decryptRefreshToken(encrypted, "other-secret"));
+});
+
+test("rep connect uses the server-based client, and the org token keeps the self client", () => {
+  const env = {
+    ZOHO_CLIENT_ID: "self-client",
+    ZOHO_CLIENT_SECRET: "self-secret",
+    ZOHO_CONNECT_CLIENT_ID: "server-client",
+    ZOHO_CONNECT_CLIENT_SECRET: "server-secret",
+  };
+  assert.deepEqual(orgOAuthClient(env), { clientId: "self-client", clientSecret: "self-secret" });
+  assert.deepEqual(connectOAuthClient(env), { clientId: "server-client", clientSecret: "server-secret" });
+  assert.deepEqual(connectOAuthClient({
+    ZOHO_CLIENT_ID: "self-client",
+    ZOHO_CLIENT_SECRET: "self-secret",
+  }), { clientId: "self-client", clientSecret: "self-secret" });
+  assert.deepEqual(connectOAuthClient({
+    ZOHO_CLIENT_ID: "self-client",
+    ZOHO_CLIENT_SECRET: "self-secret",
+    ZOHO_CONNECT_CLIENT_ID: "server-client",
+  }), { clientId: "self-client", clientSecret: "self-secret" });
+  assert.equal(buildZohoAuthorizeUrl({
+    clientId: connectOAuthClient(env).clientId,
+    redirectUri: "https://swt-film-pricing-calculator.vercel.app/api/zoho/connect/callback",
+    state: "state",
+  }).includes("client_id=server-client"), true);
+  assert.equal(buildZohoAuthorizeUrl({
+    clientId: connectOAuthClient(env).clientId,
+    redirectUri: "https://swt-film-pricing-calculator.vercel.app/api/zoho/connect/callback",
+    state: "state",
+  }).includes("self-secret"), false);
 });
 
 test("the authorize URL asks for offline access and does not carry the client secret", () => {

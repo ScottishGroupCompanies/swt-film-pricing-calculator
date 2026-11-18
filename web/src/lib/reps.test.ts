@@ -4,6 +4,7 @@ import {
   REPS,
   booksSalespersonRows,
   matchBooksSalesperson,
+  connectZohoLinkState,
   quoteZohoTokenChoice,
   repByLogin,
   resolveRepBooksSalesperson,
@@ -39,6 +40,14 @@ const liveList = {
     },
   ],
 };
+
+test("Amy sees Connect Zoho before the connection status returns", () => {
+  assert.equal(connectZohoLinkState({ loginId: "amy", connected: false, reconnect: false }), "connect");
+  assert.equal(connectZohoLinkState({ loginId: "amy", connected: true, reconnect: false }), "connected");
+  assert.equal(connectZohoLinkState({ loginId: "amy", connected: true, reconnect: true }), "reconnect");
+  assert.equal(connectZohoLinkState({ loginId: "jenny", connected: false, reconnect: false }), "org");
+  assert.equal(connectZohoLinkState({ loginId: null, connected: false, reconnect: false }), null);
+});
 
 test("a rep without a Zoho connection cannot send, and Jenny uses the organization token", () => {
   assert.equal(quoteZohoTokenChoice("amy", false, {}), "blocked");

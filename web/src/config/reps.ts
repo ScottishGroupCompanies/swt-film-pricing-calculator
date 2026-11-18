@@ -107,6 +107,19 @@ export function usesOrgZohoToken(loginId: string): boolean {
   return (ORG_ZOHO_TOKEN_LOGINS as readonly string[]).includes(loginId);
 }
 
+/** Header control for a logged-in rep. Shown even before the connection request returns. */
+export function connectZohoLinkState(input: {
+  loginId: string | null;
+  connected: boolean;
+  reconnect: boolean;
+}): "connect" | "reconnect" | "connected" | "org" | null {
+  if (!input.loginId) return null;
+  if (usesOrgZohoToken(input.loginId)) return "org";
+  if (input.reconnect) return "reconnect";
+  if (input.connected) return "connected";
+  return "connect";
+}
+
 /**
  * When "true", a rep who has not connected still sends with the
  * organization token. Default is off, so the send is blocked instead.

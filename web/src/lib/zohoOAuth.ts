@@ -18,6 +18,33 @@ export function zohoAccountsOrigin(datacenter = process.env.ZOHO_DATACENTER || "
   return `https://accounts.zoho.${datacenter}`;
 }
 
+export interface ZohoOAuthClient {
+  clientId: string;
+  clientSecret: string;
+}
+
+/** Self Client that issued ZOHO_REFRESH_TOKEN. Org-token refreshes always use this. */
+export function orgOAuthClient(env: Record<string, string | undefined> = process.env): ZohoOAuthClient {
+  const clientId = env.ZOHO_CLIENT_ID?.trim() || "";
+  const clientSecret = env.ZOHO_CLIENT_SECRET?.trim() || "";
+  if (!clientId || !clientSecret) {
+    throw new Error("Missing Zoho credentials. Need ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET.");
+  }
+  return { clientId, clientSecret };
+}
+
+/**
+ * Server-based client used to connect a rep. Both ZOHO_CONNECT_CLIENT_ID
+ * and ZOHO_CONNECT_CLIENT_SECRET must be set. Otherwise the Self Client
+ * pair is used.
+ */
+export function connectOAuthClient(env: Record<string, string | undefined> = process.env): ZohoOAuthClient {
+  const clientId = env.ZOHO_CONNECT_CLIENT_ID?.trim() || "";
+  const clientSecret = env.ZOHO_CONNECT_CLIENT_SECRET?.trim() || "";
+  if (clientId && clientSecret) return { clientId, clientSecret };
+  return orgOAuthClient(env);
+}
+
 export function zohoRedirectUri(origin: string, env: Record<string, string | undefined> = process.env): string {
   const configured = env.ZOHO_OAUTH_REDIRECT_URI?.trim();
   if (configured) return configured;

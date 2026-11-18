@@ -17,6 +17,7 @@ import {
 import { placeFilmPicker, type FilmPickerPlacement } from "@/lib/filmPickerPlacement";
 import { BULK_FILM_DISCOUNT_LABEL, formatDiscountPercent, quoteAdjustments } from "@/lib/bulkFilmDiscount";
 import { NEW_OPPORTUNITY_STAGE, OPPORTUNITY_STAGES, resolveOpportunityStage, type OpportunityStage } from "@/lib/opportunityStage";
+import { connectZohoLinkState } from "@/config/reps";
 import {
   buildCustomerProposal, buildInternalRecord, buildPrintableHTML,
   downloadFile, printHTML, type ProposalData, type ProposalLine,
@@ -848,6 +849,7 @@ export default function PricingCalculator() {
   const [zohoLink, setZohoLink] = useState<{
     usesOrgToken: boolean;
     connected: boolean;
+    canSend: boolean;
     roster: { id: string; name: string; usesOrgToken: boolean; connected: boolean }[] | null;
   } | null>(null);
   const [zohoLinkNotice, setZohoLinkNotice] = useState<string | null>(null);
@@ -1259,13 +1261,19 @@ export default function PricingCalculator() {
         setZohoLink({
           usesOrgToken: data.usesOrgToken === true,
           connected: data.connected === true,
+          canSend: data.canSend !== false,
           roster: Array.isArray(data.roster) ? data.roster : null,
         });
       })
       .catch(() => setZohoLink(null));
   }, []);
 
-  const zohoSendBlocked = zohoLink != null && !zohoLink.usesOrgToken && !zohoLink.connected;
+  const zohoLinkLabel = connectZohoLinkState({
+    loginId: user?.id ?? null,
+    connected: zohoLink?.connected === true,
+    reconnect: zohoLinkNotice === "Reconnect Zoho",
+  });
+  const zohoSendBlocked = zohoLink?.canSend === false;
 
   async function submitToZoho() {
     if (!proposalData || !user) return;
@@ -1406,10 +1414,7 @@ export default function PricingCalculator() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: "wrap" }}>
-          {zohoLink && !zohoLink.usesOrgToken && zohoLink.connected && zohoLinkNotice !== "Reconnect Zoho" && (
-            <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 12, whiteSpace: "nowrap" }}>Zoho connected</span>
-          )}
-          {zohoLink && !zohoLink.usesOrgToken && (!zohoLink.connected || zohoLinkNotice === "Reconnect Zoho") && (
+          {(zohoLinkLabel === "connect" || zohoLinkLabel === "reconnect") && (
             <a
               href="/api/zoho/connect"
               style={{
@@ -1419,10 +1424,13 @@ export default function PricingCalculator() {
                 textDecoration: "none", whiteSpace: "nowrap",
               }}
             >
-              {zohoLinkNotice === "Reconnect Zoho" ? "Reconnect Zoho" : "Connect Zoho"}
+              {zohoLinkLabel === "reconnect" ? "Reconnect Zoho" : "Connect Zoho"}
             </a>
           )}
-          {zohoLink?.usesOrgToken && !isMobile && (
+          {zohoLinkLabel === "connected" && (
+            <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 12, whiteSpace: "nowrap" }}>Zoho connected</span>
+          )}
+          {zohoLinkLabel === "org" && !isMobile && (
             <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, whiteSpace: "nowrap" }}>
               Organization Zoho
             </span>

@@ -4,18 +4,18 @@ Source of truth in code: `web/src/config/reps.ts`.
 
 Quotes are created with the logged-in rep's own Zoho token, so Created By, the note author, and the Books creator are that rep. Jenny and Admin (`ORG_ZOHO_TOKEN_LOGINS` in `reps.ts`) keep using `ZOHO_REFRESH_TOKEN`. Set `ZOHO_ORG_TOKEN_FALLBACK=true` only if a rep who has not connected should be allowed to send as that organization token. The default blocks the send with "Connect your Zoho account first".
 
-## Connecting a rep
+## Two Zoho clients
 
-The Zoho client must be a **Server-based Application**. A Self Client can only grant a token for the one person who generates it, so Amy cannot connect through a Self Client.
+| Env vars | Client | Used for |
+| --- | --- | --- |
+| `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN` | Self Client | Jenny and Admin sends, and any send allowed by `ZOHO_ORG_TOKEN_FALLBACK`. Refreshing that token always uses this client. Do not replace these with the Server-based client. |
+| `ZOHO_CONNECT_CLIENT_ID`, `ZOHO_CONNECT_CLIENT_SECRET` | Server-based Application | Connect Zoho: the authorize URL, the callback code exchange, and refreshing a rep's stored token. Both vars must be set. If either is missing, Connect falls back to the Self Client, which other reps cannot authorize. |
 
-1. Open https://api-console.zoho.com while logged into the Zoho account that owns the current `ZOHO_CLIENT_ID`.
-2. Open that client. If the type is Server-based, add this Authorized Redirect URI (the calculator's public origin, not the api-console redirect):
-   `https://swt-film-pricing-calculator.vercel.app/api/zoho/connect/callback`
-   Add the same path on any custom domain the reps actually open. It must match exactly, including `https`.
-3. If that client is a Self Client, create a new client with **Add Client → Server-based Applications**. Set the Homepage URL to the calculator origin and the Authorized Redirect URI above. Put the new Client ID and Client Secret in `ZOHO_CLIENT_ID` and `ZOHO_CLIENT_SECRET`. Then regenerate `ZOHO_REFRESH_TOKEN` for Jenny with that same client (she can use Connect Zoho only after her login is removed from `ORG_ZOHO_TOKEN_LOGINS`, or repeat the code exchange in the setup guide). Rep tokens and the organization token must be issued by the same client.
-4. A Server-based client can be authorized by more than one user in the Zoho org. Each rep does this once: log into the calculator, click **Connect Zoho**, sign in as themselves, and accept. The refresh token is encrypted with `SESSION_SECRET` (or `ZOHO_TOKEN_ENCRYPTION_KEY` if that is set) and stored in the private Vercel Blob store. It is not shown in the browser or the logs.
-5. If Zoho revokes the token, the next send says **Reconnect Zoho** and the same button starts consent again.
-6. Jenny and Admin see a connection line for every login. Their own sends do not use a personal token.
+The Server-based client's Authorized Redirect URI is `https://swt-film-pricing-calculator.vercel.app/api/zoho/connect/callback`. Add the same path for a preview host only if reps connect there. A Server-based client can be authorized by more than one user in the org. A Self Client cannot.
+
+Each rep logs into the calculator and clicks **Connect Zoho**, then signs into Zoho as themselves. The refresh token is encrypted with `SESSION_SECRET` (or `ZOHO_TOKEN_ENCRYPTION_KEY` if that is set) and stored in the private Vercel Blob store. It is not shown in the browser or the logs. If Zoho revokes it, the next send says **Reconnect Zoho**.
+
+`ZOHO_ORG_TOKEN_FALLBACK=true` lets a rep send before they connect, using the Self Client token. The Connect Zoho button still shows. Jenny and Admin see which logins are connected. Their own sends keep the Self Client token.
 
 Scopes requested: `ZohoCRM.modules.ALL`, `ZohoCRM.settings.READ`, `ZohoSheet.workbooks.ALL`, `ZohoBooks.fullaccess.all`, with `access_type=offline` so Zoho returns a refresh token.
 
