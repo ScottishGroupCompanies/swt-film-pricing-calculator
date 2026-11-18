@@ -36,7 +36,7 @@ export async function runQuoteZohoRoute(
   }
 
   try {
-    return await runWithZohoRefreshToken(auth.refreshToken, handler);
+    return await runWithZohoRefreshToken(auth.refreshToken, auth.source === "rep" ? "connect" : "org", handler);
   } catch (error) {
     if (error instanceof ZohoReconnectError && auth.source === "rep") {
       await zohoConnectionStore().remove(user.id);

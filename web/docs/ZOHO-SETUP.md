@@ -199,7 +199,7 @@ There is no field on a single estimate that hides the column. Turn the preferenc
 
 ## Per-rep Zoho connection
 
-Send to Zoho and Fill Out Estimate run as the logged-in rep's Zoho user. Setup steps, the redirect URI, and how to add a rep are in [docs/ZOHO_MAPPING.md](../../docs/ZOHO_MAPPING.md). The client has to be a Server-based Application. `ZOHO_ORG_TOKEN_FALLBACK=true` is the switch that lets an unconnected rep send with Jenny's token. Leave it unset.
+Send to Zoho and Fill Out Estimate run as the logged-in rep's Zoho user after they connect. The organization token stays on the Self Client (`ZOHO_CLIENT_ID`). Connect Zoho uses the Server-based client (`ZOHO_CONNECT_CLIENT_ID`). Details are in [docs/ZOHO_MAPPING.md](../../docs/ZOHO_MAPPING.md). `ZOHO_ORG_TOKEN_FALLBACK=true` lets an unconnected rep send with the Self Client token. The Connect Zoho button still shows.
 
 ## Deal owner and estimate salesperson
 

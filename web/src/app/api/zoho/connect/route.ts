@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { findUserById } from "@/lib/auth";
 import { usesOrgZohoToken } from "@/config/reps";
 import { getSessionUserId } from "@/lib/sessionCookies";
-import { getZohoConfig } from "@/lib/zoho";
-import { buildZohoAuthorizeUrl, signOAuthState, zohoRedirectUri } from "@/lib/zohoOAuth";
+import { buildZohoAuthorizeUrl, connectOAuthClient, signOAuthState, zohoRedirectUri } from "@/lib/zohoOAuth";
 
 export const ZOHO_OAUTH_STATE_COOKIE = "zoho_oauth_state";
 
@@ -18,11 +17,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/?zoho=org", request.url));
   }
 
-  const config = getZohoConfig();
+  const client = connectOAuthClient();
   const redirectUri = zohoRedirectUri(request.nextUrl.origin);
   const state = signOAuthState(user.id, process.env.SESSION_SECRET || "");
   const destination = buildZohoAuthorizeUrl({
-    clientId: config.clientId,
+    clientId: client.clientId,
     redirectUri,
     state,
     datacenter: process.env.ZOHO_DATACENTER || "com",

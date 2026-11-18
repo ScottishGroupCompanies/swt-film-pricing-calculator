@@ -23,8 +23,8 @@ import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustom
 import { booksLineItemBody } from "./booksEstimatePayload";
 import { createHash } from "node:crypto";
 import { booksSalespersonRows, matchBooksSalesperson, stageValueToSend } from "@/config/reps";
-import { refreshTokenForThisCall } from "./zohoCallContext";
-import { ZohoReconnectError, zohoRefreshIsRevoked } from "./zohoOAuth";
+import { zohoCallAuth } from "./zohoCallContext";
+import { ZohoReconnectError, connectOAuthClient, orgOAuthClient, zohoAccountsOrigin, zohoRefreshIsRevoked } from "./zohoOAuth";
 import { crmOwner, resolveOpportunityStage } from "./opportunityStage";
 import { matchUserIdByEmail } from "./zohoOwners";
 
@@ -85,20 +85,22 @@ function refreshCacheKey(refreshToken: string): string {
  * Cached per refresh token so two reps on one server do not share a token.
  */
 export async function getAccessToken(): Promise<string> {
-  const refreshToken = refreshTokenForThisCall();
-  const key = refreshCacheKey(refreshToken);
+  const call = zohoCallAuth();
+  const refreshToken = call.refreshToken;
+  const oauth = call.client === "connect" ? connectOAuthClient() : orgOAuthClient();
+  const key = refreshCacheKey(`${oauth.clientId}:${refreshToken}`);
   const now = Date.now();
   const cached = accessTokenCache.get(key);
   if (cached && now < cached.expiresAt - 5 * 60 * 1000) return cached.token;
 
-  const config = getZohoConfig();
-  const resp = await fetch(config.accountsUrl, {
+  const tokenUrl = process.env.ZOHO_ACCOUNTS_URL || `${zohoAccountsOrigin()}/oauth/v2/token`;
+  const resp = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       refresh_token: refreshToken,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
+      client_id: oauth.clientId,
+      client_secret: oauth.clientSecret,
       grant_type: "refresh_token",
     }),
   });

@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { findUserById } from "@/lib/auth";
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { zohoConnectionStore } from "@/lib/zohoConnectionStore";
-import { getZohoConfig } from "@/lib/zoho";
 import { ZOHO_OAUTH_STATE_COOKIE } from "../route";
 import { encryptRefreshToken, zohoTokenSecret } from "@/lib/zohoTokenCrypto";
-import { exchangeAuthorizationCode, verifyOAuthState, zohoRedirectUri } from "@/lib/zohoOAuth";
+import { connectOAuthClient, exchangeAuthorizationCode, verifyOAuthState, zohoAccountsOrigin, zohoRedirectUri } from "@/lib/zohoOAuth";
 
 function back(request: NextRequest, zoho: string): NextResponse {
   const response = NextResponse.redirect(new URL(`/?zoho=${encodeURIComponent(zoho)}`, request.url));
@@ -31,14 +30,14 @@ export async function GET(request: NextRequest) {
   if (!code) return back(request, "denied");
 
   try {
-    const config = getZohoConfig();
+    const client = connectOAuthClient();
     const redirectUri = zohoRedirectUri(request.nextUrl.origin);
     const { refreshToken } = await exchangeAuthorizationCode({
       code,
       redirectUri,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      tokenUrl: config.accountsUrl,
+      clientId: client.clientId,
+      clientSecret: client.clientSecret,
+      tokenUrl: process.env.ZOHO_ACCOUNTS_URL || `${zohoAccountsOrigin()}/oauth/v2/token`,
     });
     const encrypted = encryptRefreshToken(refreshToken, zohoTokenSecret());
     await zohoConnectionStore().write({
