@@ -21,7 +21,10 @@ import {
 } from "./address";
 import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustomerLink";
 import { booksLineItemBody } from "./booksEstimatePayload";
+import { createHash } from "node:crypto";
 import { booksSalespersonRows, matchBooksSalesperson, stageValueToSend } from "@/config/reps";
+import { refreshTokenForThisCall } from "./zohoCallContext";
+import { ZohoReconnectError, zohoRefreshIsRevoked } from "./zohoOAuth";
 import { crmOwner, resolveOpportunityStage } from "./opportunityStage";
 import { matchUserIdByEmail } from "./zohoOwners";
 
@@ -70,51 +73,51 @@ export function getZohoConfig(): ZohoConfig {
 
 // ─── Token Management ────────────────────────────────────────────────────
 
-let cachedAccessToken: string | null = null;
-let tokenExpiresAt = 0;
+const accessTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+function refreshCacheKey(refreshToken: string): string {
+  return createHash("sha256").update(refreshToken).digest("hex");
+}
 
 /**
- * Get a valid Zoho access token, refreshing if necessary.
- * Access tokens last ~1 hour. We cache and refresh proactively.
+ * Access token for this call. Quote routes pass the rep's refresh token
+ * through runWithZohoRefreshToken. Other calls use ZOHO_REFRESH_TOKEN.
+ * Cached per refresh token so two reps on one server do not share a token.
  */
 export async function getAccessToken(): Promise<string> {
-  // Return cached token if still valid (with 5-min safety margin)
+  const refreshToken = refreshTokenForThisCall();
+  const key = refreshCacheKey(refreshToken);
   const now = Date.now();
-  if (cachedAccessToken && now < tokenExpiresAt - 5 * 60 * 1000) {
-    return cachedAccessToken;
-  }
+  const cached = accessTokenCache.get(key);
+  if (cached && now < cached.expiresAt - 5 * 60 * 1000) return cached.token;
 
   const config = getZohoConfig();
-  
-  // Refresh the token
-  const params = new URLSearchParams({
-    refresh_token: config.refreshToken,
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "refresh_token",
-  });
-
   const resp = await fetch(config.accountsUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
+    body: new URLSearchParams({
+      refresh_token: refreshToken,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      grant_type: "refresh_token",
+    }),
   });
-
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    throw new Error(`Zoho token refresh failed (${resp.status}): ${errorText}`);
+  const raw = await resp.text();
+  let data: { access_token?: string; expires_in?: number; error?: string } = {};
+  try {
+    data = raw ? JSON.parse(raw) as { access_token?: string; expires_in?: number; error?: string } : {};
+  } catch {
+    data = {};
+  }
+  if (!resp.ok || data.error || !data.access_token) {
+    accessTokenCache.delete(key);
+    if (zohoRefreshIsRevoked(resp.status, data)) throw new ZohoReconnectError();
+    throw new Error(`Zoho token refresh failed (${resp.status}${data.error ? `: ${data.error}` : ""})`);
   }
 
-  const data = await resp.json();
-  
-  if (!data.access_token) {
-    throw new Error(`Zoho token refresh returned no access_token: ${JSON.stringify(data)}`);
-  }
-
-  cachedAccessToken = data.access_token as string;
-  tokenExpiresAt = now + (data.expires_in || 3600) * 1000;
-
-  return cachedAccessToken;
+  const token = data.access_token;
+  accessTokenCache.set(key, { token, expiresAt: now + (data.expires_in || 3600) * 1000 });
+  return token;
 }
 
 // ─── CRM API ─────────────────────────────────────────────────────────────

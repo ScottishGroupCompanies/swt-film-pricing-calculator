@@ -12,11 +12,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { addNote } from "@/lib/zoho";
+import { runQuoteZohoRoute } from "@/lib/quoteZohoRoute";
+import { quoteFailureText } from "@/lib/zohoOAuth";
 import { htmlToPdf } from "@/lib/pdf";
 import { put } from "@vercel/blob";
 import { buildPrintableHTML, type ProposalData } from "@/lib/proposal";
 
 export async function POST(request: NextRequest) {
+  return runQuoteZohoRoute(() => generateEstimate(request));
+}
+
+async function generateEstimate(request: NextRequest) {
   try {
     const body: ProposalData = await request.json();
 
@@ -72,13 +78,14 @@ export async function POST(request: NextRequest) {
       }
       results.success = true;
     } catch (e) {
-      results.errors.push(`Estimate PDF generation/upload failed: ${e instanceof Error ? e.message : String(e)}`);
+      results.errors.push(`Estimate PDF generation/upload failed: ${quoteFailureText(e)}`);
     }
 
     return NextResponse.json(results, { status: results.success ? 200 : 500 });
   } catch (e) {
+    if (e instanceof Error && e.name === "ZohoReconnectError") throw e;
     return NextResponse.json(
-      { success: false, error: e instanceof Error ? e.message : "Internal server error" },
+      { success: false, error: quoteFailureText(e) },
       { status: 500 }
     );
   }

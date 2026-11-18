@@ -197,6 +197,10 @@ If a Discount column is still on the estimate after this change, it is not comin
 
 There is no field on a single estimate that hides the column. Turn the preference to **I don't give discounts** (or **At Transaction Level** if a single discount total is still wanted) and uncheck Discount on the template.
 
+## Per-rep Zoho connection
+
+Send to Zoho and Fill Out Estimate run as the logged-in rep's Zoho user. Setup steps, the redirect URI, and how to add a rep are in [docs/ZOHO_MAPPING.md](../../docs/ZOHO_MAPPING.md). The client has to be a Server-based Application. `ZOHO_ORG_TOKEN_FALLBACK=true` is the switch that lets an unconnected rep send with Jenny's token. Leave it unset.
+
 ## Deal owner and estimate salesperson
 
 The committed ids and the Stage picklist are in [docs/ZOHO_MAPPING.md](../../docs/ZOHO_MAPPING.md) and `web/src/config/reps.ts`. An env var overrides one login. It is not required.
