@@ -93,6 +93,41 @@ export function repByLogin(id: string): RepRecord | undefined {
 }
 
 /**
+ * These logins send quotes with the organization refresh token
+ * (ZOHO_REFRESH_TOKEN, Jenny's Zoho user). Every other login must
+ * connect their own Zoho account. Remove a name here if that person
+ * should connect too.
+ *
+ * Adding Taylor is a new RepRecord plus a login in auth.ts. No token
+ * is stored in this file.
+ */
+export const ORG_ZOHO_TOKEN_LOGINS = ["jenny", "admin"] as const;
+
+export function usesOrgZohoToken(loginId: string): boolean {
+  return (ORG_ZOHO_TOKEN_LOGINS as readonly string[]).includes(loginId);
+}
+
+/**
+ * When "true", a rep who has not connected still sends with the
+ * organization token. Default is off, so the send is blocked instead.
+ */
+export function orgZohoTokenFallbackEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.ZOHO_ORG_TOKEN_FALLBACK === "true";
+}
+
+/** Which token a quote send is allowed to use. "blocked" means the rep must connect. */
+export function quoteZohoTokenChoice(
+  loginId: string,
+  hasRepToken: boolean,
+  env: Record<string, string | undefined> = process.env,
+): "org" | "rep" | "blocked" {
+  if (usesOrgZohoToken(loginId)) return "org";
+  if (hasRepToken) return "rep";
+  if (orgZohoTokenFallbackEnabled(env)) return "org";
+  return "blocked";
+}
+
+/**
  * The only Deals layout returned by GET /crm/v2/settings/layouts?module=Deals.
  * The app does not send Layout. Zoho uses this layout by default.
  */

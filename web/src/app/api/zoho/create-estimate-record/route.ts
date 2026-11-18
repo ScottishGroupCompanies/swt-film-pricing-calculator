@@ -45,6 +45,8 @@ import { resolveRepBooksSalesperson } from "@/config/reps";
 import { getSessionUserId } from "@/lib/sessionCookies";
 import { findUserById } from "@/lib/auth";
 import { booksSalespersonIdEnvKey } from "@/lib/zohoOwners";
+import { runQuoteZohoRoute } from "@/lib/quoteZohoRoute";
+import { quoteFailureText } from "@/lib/zohoOAuth";
 
 interface EstimateLine {
   desc: string;
@@ -108,6 +110,10 @@ function lookupId(value: unknown): string | null {
 }
 
 export async function POST(request: NextRequest) {
+  return runQuoteZohoRoute(() => createEstimate(request));
+}
+
+async function createEstimate(request: NextRequest) {
   try {
     const body: CreateEstimateRequest = await request.json();
 
@@ -214,7 +220,7 @@ export async function POST(request: NextRequest) {
         await updateBooksCustomerAddress(orgId, customerId, { billingAddress, shippingAddress });
       } catch (e) {
         warnings.push(
-          `Billing address could not be saved on the Zoho Books customer (${e instanceof Error ? e.message : String(e)}). City, state, and ZIP may be blank.`
+          `Billing address could not be saved on the Zoho Books customer (${quoteFailureText(e)}). City, state, and ZIP may be blank.`
         );
       }
     }
@@ -323,7 +329,7 @@ export async function POST(request: NextRequest) {
           );
         } catch (e) {
           warnings.push(
-            `Could not look up the Zoho Books salesperson for ${sessionUser.name} (${e instanceof Error ? e.message : String(e)}). The estimate uses the name "${salespersonName}". Set ${booksSalespersonIdEnvKey(sessionUser.id)} to assign that salesperson record.`,
+            `Could not look up the Zoho Books salesperson for ${sessionUser.name} (${quoteFailureText(e)}). The estimate uses the name "${salespersonName}". Set ${booksSalespersonIdEnvKey(sessionUser.id)} to assign that salesperson record.`,
           );
         }
       }
@@ -379,8 +385,9 @@ export async function POST(request: NextRequest) {
       unmatchedFilms: unmatchedFilms.length ? unmatchedFilms : undefined,
     });
   } catch (e) {
+    if (e instanceof Error && e.name === "ZohoReconnectError") throw e;
     return NextResponse.json(
-      { success: false, error: e instanceof Error ? e.message : "Internal server error" },
+      { success: false, error: quoteFailureText(e) },
       { status: 500 }
     );
   }

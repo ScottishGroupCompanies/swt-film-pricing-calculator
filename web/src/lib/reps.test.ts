@@ -4,6 +4,7 @@ import {
   REPS,
   booksSalespersonRows,
   matchBooksSalesperson,
+  quoteZohoTokenChoice,
   repByLogin,
   resolveRepBooksSalesperson,
 } from "../config/reps.ts";
@@ -38,6 +39,15 @@ const liveList = {
     },
   ],
 };
+
+test("a rep without a Zoho connection cannot send, and Jenny uses the organization token", () => {
+  assert.equal(quoteZohoTokenChoice("amy", false, {}), "blocked");
+  assert.equal(quoteZohoTokenChoice("amy", true, {}), "rep");
+  assert.equal(quoteZohoTokenChoice("jenny", false, {}), "org");
+  assert.equal(quoteZohoTokenChoice("admin", false, {}), "org");
+  assert.equal(quoteZohoTokenChoice("amy", false, { ZOHO_ORG_TOKEN_FALLBACK: "true" }), "org");
+  assert.equal(quoteZohoTokenChoice("blake", true, { ZOHO_ORG_TOKEN_FALLBACK: "true" }), "rep");
+});
 
 test("Amy's committed Books salesperson is Amy Haley", () => {
   const amy = repByLogin("amy");

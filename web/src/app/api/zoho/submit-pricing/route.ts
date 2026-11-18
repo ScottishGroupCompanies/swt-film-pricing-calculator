@@ -23,6 +23,8 @@ import { INSTALL_ONLY_RATE_PER_SQ_FT } from "@/lib/pricingData";
 import { zohoSubmitResult } from "@/lib/zohoSubmitResult";
 import { resolveDealOwner } from "@/lib/zohoOwners";
 import { resolveOpportunityStage } from "@/lib/opportunityStage";
+import { runQuoteZohoRoute } from "@/lib/quoteZohoRoute";
+import { quoteFailureText } from "@/lib/zohoOAuth";
 
 interface PricingLineItem {
   desc: string;
@@ -98,6 +100,10 @@ interface SubmitPricingRequest {
 // create-estimate-record/route.ts so both use the same tolerant parser.
 
 export async function POST(request: NextRequest) {
+  return runQuoteZohoRoute(() => submitPricing(request));
+}
+
+async function submitPricing(request: NextRequest) {
   try {
     const body: SubmitPricingRequest = await request.json();
 
@@ -138,7 +144,7 @@ export async function POST(request: NextRequest) {
       ownerId = (await resolveDealOwner(sessionUser, findCrmUserIdByEmail)).id;
     } catch (e) {
       return NextResponse.json(
-        { success: false, errors: [`Deal creation failed: ${e instanceof Error ? e.message : String(e)}`] },
+        { success: false, errors: [`Deal creation failed: ${quoteFailureText(e)}`] },
         { status: 500 },
       );
     }
@@ -213,7 +219,7 @@ export async function POST(request: NextRequest) {
         }
       }
     } catch (e) {
-      results.errors.push(`Contact creation failed: ${e instanceof Error ? e.message : String(e)}`);
+      results.errors.push(`Contact creation failed: ${quoteFailureText(e)}`);
     }
 
     // Zoho auto-creates a personal account for a new contact, owned by the
@@ -222,7 +228,7 @@ export async function POST(request: NextRequest) {
       try {
         await updateRecord("Accounts", results.accountId, { Owner: { id: ownerId } });
       } catch (e) {
-        results.errors.push(`Could not assign the account to the rep: ${e instanceof Error ? e.message : String(e)}`);
+        results.errors.push(`Could not assign the account to the rep: ${quoteFailureText(e)}`);
       }
     }
 
@@ -258,7 +264,7 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch (e) {
-        results.errors.push(`Account creation failed: ${e instanceof Error ? e.message : String(e)}`);
+        results.errors.push(`Account creation failed: ${quoteFailureText(e)}`);
       }
     } else if (!results.accountId && body.customer?.trim()) {
       // Fallback: the Contact somehow has no Account linked (shouldn't
@@ -284,7 +290,7 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch (e) {
-        results.errors.push(`Account creation failed: ${e instanceof Error ? e.message : String(e)}`);
+        results.errors.push(`Account creation failed: ${quoteFailureText(e)}`);
       }
     }
 
@@ -298,7 +304,7 @@ export async function POST(request: NextRequest) {
           Account_Name: { id: results.accountId },
         });
       } catch (e) {
-        results.errors.push(`Could not link the contact to the business account: ${e instanceof Error ? e.message : String(e)}`);
+        results.errors.push(`Could not link the contact to the business account: ${quoteFailureText(e)}`);
       }
     }
 
@@ -320,7 +326,7 @@ export async function POST(request: NextRequest) {
           await updateRecord("Accounts", results.accountId, fields);
         }
       } catch (e) {
-        results.errors.push(`Could not save the account billing address: ${e instanceof Error ? e.message : String(e)}`);
+        results.errors.push(`Could not save the account billing address: ${quoteFailureText(e)}`);
       }
     }
 
@@ -359,10 +365,10 @@ export async function POST(request: NextRequest) {
         await addNote(dealResult.id, "Deals", `Pricing Detail — ${body.date}`, noteContent);
         results.noteAdded = true;
       } catch (e) {
-        results.errors.push(`Note creation failed: ${e instanceof Error ? e.message : String(e)}`);
+        results.errors.push(`Note creation failed: ${quoteFailureText(e)}`);
       }
     } catch (e) {
-      results.errors.push(`Deal creation failed: ${e instanceof Error ? e.message : String(e)}`);
+      results.errors.push(`Deal creation failed: ${quoteFailureText(e)}`);
     }
 
     // ── 4. Append row to Zoho Sheet ───────────────────────────────────
@@ -409,7 +415,7 @@ export async function POST(request: NextRequest) {
         results.errors.push("ZOHO_SHEET_WORKBOOK_ID not configured — skipping sheet row");
       }
     } catch (e) {
-      results.errors.push(`Sheet append failed: ${e instanceof Error ? e.message : String(e)}`);
+      results.errors.push(`Sheet append failed: ${quoteFailureText(e)}`);
     }
 
     // ── Result ────────────────────────────────────────────────────────
@@ -424,8 +430,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(results, { status: outcome.status });
   } catch (e) {
+    if (e instanceof Error && e.name === "ZohoReconnectError") throw e;
     return NextResponse.json(
-      { success: false, error: e instanceof Error ? e.message : "Internal server error" },
+      { success: false, error: quoteFailureText(e) },
       { status: 500 }
     );
   }

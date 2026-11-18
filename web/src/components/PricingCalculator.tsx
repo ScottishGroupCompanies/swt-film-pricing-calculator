@@ -845,6 +845,12 @@ export default function PricingCalculator() {
   const [zohoStatus, setZohoStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [zohoResult, setZohoResult] = useState<{ contactId?: string; accountId?: string; dealId?: string; opportunityNumber?: string | null; sheetRowAdded?: boolean; errors?: string[] } | null>(null);
   const [zohoEnabled, setZohoEnabled] = useState<boolean | null>(null);
+  const [zohoLink, setZohoLink] = useState<{
+    usesOrgToken: boolean;
+    connected: boolean;
+    roster: { id: string; name: string; usesOrgToken: boolean; connected: boolean }[] | null;
+  } | null>(null);
+  const [zohoLinkNotice, setZohoLinkNotice] = useState<string | null>(null);
   const [estimateRecordStatus, setEstimateRecordStatus] = useState<"idle" | "submitting" | "success" | "error" | "not_configured">("idle");
   const [estimateRecordResult, setEstimateRecordResult] = useState<{ estimateId?: string; estimateNumber?: string; crmRecordId?: string | null; estimateUrl?: string | null; syncPending?: boolean; customerLinked?: boolean; linkWarning?: string; warnings?: string[]; error?: string } | null>(null);
 
@@ -1230,13 +1236,36 @@ export default function PricingCalculator() {
     setDraftRestoredAt(null);
   }
 
-  // Check if Zoho is configured on mount
+  // Check if Zoho is configured on mount, and whether this rep has connected.
   useEffect(() => {
     fetch("/api/zoho/health-check")
       .then((r) => r.json())
       .then((data) => setZohoEnabled(data.configured === true))
       .catch(() => setZohoEnabled(false));
+    const params = new URLSearchParams(window.location.search);
+    const zoho = params.get("zoho");
+    if (zoho === "connected") setZohoLinkNotice("Zoho connected.");
+    if (zoho === "denied") setZohoLinkNotice("Zoho was not connected. Try Connect Zoho again.");
+    if (zoho === "org") setZohoLinkNotice("This login uses the organization Zoho account.");
+    if (zoho) {
+      params.delete("zoho");
+      const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+      window.history.replaceState(null, "", next);
+    }
+    fetch("/api/zoho/connection")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setZohoLink({
+          usesOrgToken: data.usesOrgToken === true,
+          connected: data.connected === true,
+          roster: Array.isArray(data.roster) ? data.roster : null,
+        });
+      })
+      .catch(() => setZohoLink(null));
   }, []);
+
+  const zohoSendBlocked = zohoLink != null && !zohoLink.usesOrgToken && !zohoLink.connected;
 
   async function submitToZoho() {
     if (!proposalData || !user) return;
@@ -1252,6 +1281,10 @@ export default function PricingCalculator() {
       });
       const data = await resp.json();
 
+      if (data.code === "ZOHO_NOT_CONNECTED" || data.code === "ZOHO_RECONNECT") {
+        setZohoLink((current) => current ? { ...current, connected: false } : current);
+        setZohoLinkNotice(data.code === "ZOHO_RECONNECT" ? "Reconnect Zoho" : "Connect your Zoho account first");
+      }
       if (data.success && data.dealId) {
         setZohoResult(data);
         setZohoStatus("success");
@@ -1309,6 +1342,10 @@ export default function PricingCalculator() {
       });
       const data = await resp.json();
 
+      if (data.code === "ZOHO_NOT_CONNECTED" || data.code === "ZOHO_RECONNECT") {
+        setZohoLink((current) => current ? { ...current, connected: false } : current);
+        setZohoLinkNotice(data.code === "ZOHO_RECONNECT" ? "Reconnect Zoho" : "Connect your Zoho account first");
+      }
       if (data.success) {
         setEstimateRecordResult(data);
         setEstimateRecordStatus("success");
@@ -1369,10 +1406,47 @@ export default function PricingCalculator() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: "wrap" }}>
-          {/* Signed-in user (read-only — no switching) */}
+          {zohoLink && !zohoLink.usesOrgToken && zohoLink.connected && zohoLinkNotice !== "Reconnect Zoho" && (
+            <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 12, whiteSpace: "nowrap" }}>Zoho connected</span>
+          )}
+          {zohoLink && !zohoLink.usesOrgToken && (!zohoLink.connected || zohoLinkNotice === "Reconnect Zoho") && (
+            <a
+              href="/api/zoho/connect"
+              style={{
+                background: "#fff", color: THEME.darkGray,
+                border: "1px solid rgba(255,255,255,0.35)",
+                borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600,
+                textDecoration: "none", whiteSpace: "nowrap",
+              }}
+            >
+              {zohoLinkNotice === "Reconnect Zoho" ? "Reconnect Zoho" : "Connect Zoho"}
+            </a>
+          )}
+          {zohoLink?.usesOrgToken && !isMobile && (
+            <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, whiteSpace: "nowrap" }}>
+              Organization Zoho
+            </span>
+          )}
           <CurrentUserBadge user={user} onLogout={handleLogout} />
         </div>
       </header>
+      {zohoLink?.roster && (
+        <div style={{
+          background: THEME.white, borderBottom: `1px solid ${THEME.border}`,
+          padding: isMobile ? "8px 14px" : "8px 28px",
+          fontSize: 12, color: THEME.textMuted,
+        }}>
+          Zoho connections: {zohoLink.roster.map((rep) => `${rep.name} ${rep.connected ? "connected" : "not connected"}`).join(" · ")}
+        </div>
+      )}
+      {zohoLinkNotice && (
+        <div style={{
+          background: "#fff8e6", borderBottom: "1px solid #f0d78a",
+          padding: isMobile ? "8px 14px" : "8px 28px", fontSize: 13, color: "#8a6d1a",
+        }}>
+          {zohoLinkNotice}
+        </div>
+      )}
 
       {/* ── DRAFT RECOVERY BANNER ── */}
       {draftPrompt && (
@@ -2554,24 +2628,24 @@ export default function PricingCalculator() {
             {zohoEnabled && (
               <div style={{ marginTop: 4 }}>
                 <div style={{ height: 1, background: THEME.border, margin: "8px 0" }} />
-                {(!totals.total || !user) && (
+                {(!totals.total || !user || zohoSendBlocked) && (
                   <div style={{
                     padding: "6px 10px", background: THEME.lightGray, borderRadius: 6,
                     fontSize: 10, color: THEME.textMuted, textAlign: "center", marginBottom: 6,
                   }}>
-                    {!user ? "Select a user to enable Zoho send" : "Add at least one priced window to enable Zoho send"}
+                    {zohoSendBlocked ? "Connect your Zoho account first" : !user ? "Select a user to enable Zoho send" : "Add at least one priced window to enable Zoho send"}
                   </div>
                 )}
                 {zohoStatus === "idle" && (
                   <button
                     onClick={submitToZoho}
-                    disabled={!totals.total || !user}
+                    disabled={!totals.total || !user || zohoSendBlocked}
                     style={{
                       width: "100%", padding: 10,
-                      background: (!totals.total || !user) ? THEME.lightGray : THEME.darkGray,
-                      color: (!totals.total || !user) ? THEME.textMuted : "#fff",
+                      background: (!totals.total || !user || zohoSendBlocked) ? THEME.lightGray : THEME.darkGray,
+                      color: (!totals.total || !user || zohoSendBlocked) ? THEME.textMuted : "#fff",
                       border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                      cursor: (!totals.total || !user) ? "not-allowed" : "pointer",
+                      cursor: (!totals.total || !user || zohoSendBlocked) ? "not-allowed" : "pointer",
                       fontFamily: "inherit",
                     }}
                   >
@@ -2651,10 +2725,13 @@ export default function PricingCalculator() {
                 {estimateRecordStatus === "idle" && (
                   <button
                     onClick={fillOutEstimateRecord}
+                    disabled={zohoSendBlocked}
                     style={{
-                      width: "100%", padding: 10, background: THEME.darkGray, color: "#fff",
+                      width: "100%", padding: 10,
+                      background: zohoSendBlocked ? THEME.lightGray : THEME.darkGray,
+                      color: zohoSendBlocked ? THEME.textMuted : "#fff",
                       border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                      cursor: "pointer", fontFamily: "inherit",
+                      cursor: zohoSendBlocked ? "not-allowed" : "pointer", fontFamily: "inherit",
                     }}
                   >
                     📝 Fill Out Estimate in Zoho
