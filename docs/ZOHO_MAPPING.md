@@ -17,7 +17,7 @@ Each rep logs into the calculator and clicks **Connect Zoho**, then signs into Z
 
 `ZOHO_ORG_TOKEN_FALLBACK=true` lets a rep send before they connect, using the Self Client token. The Connect Zoho button still shows. Jenny and Admin see which logins are connected. Their own sends keep the Self Client token.
 
-Scopes requested: `ZohoCRM.modules.ALL`, `ZohoCRM.settings.READ`, `ZohoSheet.workbooks.ALL`, `ZohoBooks.fullaccess.all`, with `access_type=offline` so Zoho returns a refresh token.
+Scopes requested, comma-separated with no spaces, from `accounts.zoho.com` (US, same datacenter as `www.zohoapis.com/books/v3`): `ZohoCRM.modules.ALL`, `ZohoCRM.users.READ`, `ZohoSheet.dataAPI.UPDATE`, `ZohoBooks.fullaccess.all`. `access_type=offline` is a separate parameter so Zoho returns a refresh token. `ZohoSheet.workbooks.ALL` is not a Zoho scope and was rejected as "Scope does not exist." Sheet's write scope is `ZohoSheet.dataAPI.UPDATE`. CRM settings are not called when a rep sends a quote, so that scope is not requested.
 
 ## Adding a rep
 

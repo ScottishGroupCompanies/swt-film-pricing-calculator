@@ -1,14 +1,20 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
- * Scopes the running app already uses: CRM modules (deals, contacts,
- * accounts, notes, the Books sync module), settings read, Sheet, and
- * Books. offline access is requested with access_type, not as a scope.
+ * Scopes for a rep's Connect Zoho consent. Comma-separated, no spaces.
+ * Requested from accounts.zoho.com, which matches the US Books host
+ * www.zohoapis.com/books/v3.
+ *
+ * ZohoSheet.workbooks.ALL is not a Zoho scope. Sheet's write scope is
+ * ZohoSheet.dataAPI.UPDATE (https://www.zoho.com/sheet/help/api/v2/authorization.html).
+ * CRM settings are not called on the quote path, so that scope is omitted.
+ * The quote path does call CRM modules, the CRM user lookup, a Sheet row
+ * append, and Books estimates, contacts, items, and salespersons.
  */
 export const ZOHO_OAUTH_SCOPES = [
   "ZohoCRM.modules.ALL",
-  "ZohoCRM.settings.READ",
-  "ZohoSheet.workbooks.ALL",
+  "ZohoCRM.users.READ",
+  "ZohoSheet.dataAPI.UPDATE",
   "ZohoBooks.fullaccess.all",
 ].join(",");
 

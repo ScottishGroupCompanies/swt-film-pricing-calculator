@@ -64,9 +64,16 @@ test("the authorize URL asks for offline access and does not carry the client se
   assert.equal(url.searchParams.get("client_id"), "1000.client");
   assert.equal(url.searchParams.get("state"), "signed-state");
   assert.equal(url.searchParams.get("client_secret"), null);
-  assert.match(url.searchParams.get("scope") || "", /ZohoCRM\.modules\.ALL/);
-  assert.match(ZOHO_OAUTH_SCOPES, /ZohoBooks\.fullaccess\.all/);
-  assert.match(ZOHO_OAUTH_SCOPES, /ZohoSheet\.workbooks\.ALL/);
+  assert.equal(url.searchParams.get("scope"), ZOHO_OAUTH_SCOPES);
+  assert.equal(ZOHO_OAUTH_SCOPES.includes(" "), false);
+  assert.deepEqual(ZOHO_OAUTH_SCOPES.split(","), [
+    "ZohoCRM.modules.ALL",
+    "ZohoCRM.users.READ",
+    "ZohoSheet.dataAPI.UPDATE",
+    "ZohoBooks.fullaccess.all",
+  ]);
+  assert.equal(ZOHO_OAUTH_SCOPES.includes("workbooks"), false);
+  assert.equal(url.origin, "https://accounts.zoho.com");
 });
 
 test("oauth state is bound to the rep and rejects tampering", () => {

@@ -26,7 +26,7 @@ Zoho uses OAuth 2.0. You need a refresh token (lasts indefinitely) to generate a
 1. In the API Console, go to **"Self-Client"** tab
 2. In the **"Scope"** field, paste:
    ```
-   ZohoCRM.modules.contacts.CREATE,ZohoCRM.modules.deals.CREATE,ZohoCRM.modules.notes.CREATE,ZohoCRM.modules.contacts.READ,ZohoSheet.workbooks.ALL
+   ZohoCRM.modules.contacts.CREATE,ZohoCRM.modules.deals.CREATE,ZohoCRM.modules.notes.CREATE,ZohoCRM.modules.contacts.READ,ZohoSheet.dataAPI.UPDATE
    ```
 3. Set **Expiry Time** to `1000000` minutes (max)
 4. Click **"View Token"**
@@ -36,7 +36,7 @@ Zoho uses OAuth 2.0. You need a refresh token (lasts indefinitely) to generate a
 
 1. Open this URL in your browser (replace `CLIENT_ID`):
    ```
-   https://accounts.zoho.com/oauth/v2/auth?scope=ZohoCRM.modules.contacts.CREATE,ZohoCRM.modules.deals.CREATE,ZohoCRM.modules.notes.CREATE,ZohoCRM.modules.contacts.READ,ZohoSheet.workbooks.ALL&client_id=CLIENT_ID&response_type=code&access_type=offline&redirect_uri=https://api-console.zoho.com/redirect
+   https://accounts.zoho.com/oauth/v2/auth?scope=ZohoCRM.modules.contacts.CREATE,ZohoCRM.modules.deals.CREATE,ZohoCRM.modules.notes.CREATE,ZohoCRM.modules.contacts.READ,ZohoSheet.dataAPI.UPDATE&client_id=CLIENT_ID&response_type=code&access_type=offline&redirect_uri=https://api-console.zoho.com/redirect
    ```
 2. Click **"Accept"**
 3. Copy the authorization code from the redirect URL
@@ -167,7 +167,7 @@ Use your email provider's SMTP settings. Common ones:
 | `ZohoCRM.modules.deals.CREATE` | Create deals/opportunities |
 | `ZohoCRM.modules.notes.CREATE` | Add notes to deals |
 | `ZohoCRM.users.READ` | Look up a CRM user id by email (deal owner) |
-| `ZohoSheet.workbooks.ALL` | Read/write Zoho Sheet data |
+| `ZohoSheet.dataAPI.UPDATE` | Append rows to Zoho Sheet |
 
 ---
 
