@@ -1275,6 +1275,20 @@ export default function PricingCalculator() {
   });
   const zohoSendBlocked = zohoLink?.canSend === false;
 
+  async function readZohoResponse(resp: Response): Promise<{ error?: string; errors?: string[]; code?: string; success?: boolean; [key: string]: unknown }> {
+    const text = await resp.text();
+    if (!text.trim()) {
+      const message = `The server returned an empty response (${resp.status}).`;
+      return { error: message, errors: [message] };
+    }
+    try {
+      return JSON.parse(text) as { error?: string; errors?: string[]; code?: string; success?: boolean };
+    } catch {
+      const message = `The server returned an unexpected response (${resp.status}).`;
+      return { error: message, errors: [message] };
+    }
+  }
+
   async function submitToZoho() {
     if (!proposalData || !user) return;
     setZohoStatus("submitting");
@@ -1287,7 +1301,7 @@ export default function PricingCalculator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...proposalData, existingContactId }),
       });
-      const data = await resp.json();
+      const data = await readZohoResponse(resp);
 
       if (data.code === "ZOHO_NOT_CONNECTED" || data.code === "ZOHO_RECONNECT") {
         setZohoLink((current) => current ? { ...current, connected: false } : current);
@@ -1348,7 +1362,7 @@ export default function PricingCalculator() {
           lines: proposalData.lines,
         }),
       });
-      const data = await resp.json();
+      const data = await readZohoResponse(resp);
 
       if (data.code === "ZOHO_NOT_CONNECTED" || data.code === "ZOHO_RECONNECT") {
         setZohoLink((current) => current ? { ...current, connected: false } : current);
@@ -1357,7 +1371,7 @@ export default function PricingCalculator() {
       if (data.success) {
         setEstimateRecordResult(data);
         setEstimateRecordStatus("success");
-        if (data.estimateUrl) {
+        if (typeof data.estimateUrl === "string" && data.estimateUrl) {
           window.open(data.estimateUrl, "_blank");
         }
       } else if (data.notConfigured) {

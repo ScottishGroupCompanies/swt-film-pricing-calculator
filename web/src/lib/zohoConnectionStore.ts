@@ -16,6 +16,13 @@ export interface ZohoConnectionStore {
 
 const PREFIX = "zoho-connections/";
 
+/**
+ * This project's Blob store is public. put({ access: "private" }) is rejected,
+ * and get({ access: "private", useCache: false }) returns 400. The file is
+ * still ciphertext. The pathname is the login id.
+ */
+const BLOB_ACCESS = "public" as const;
+
 function pathname(loginId: string): string {
   if (!/^[a-z0-9_-]+$/.test(loginId)) throw new Error("Invalid login id");
   return `${PREFIX}${loginId}.json`;
@@ -40,7 +47,7 @@ export function memoryZohoConnectionStore(): ZohoConnectionStore {
 }
 
 async function readBlob(loginId: string): Promise<StoredZohoConnection | null> {
-  const result = await get(pathname(loginId), { access: "private", useCache: false });
+  const result = await get(pathname(loginId), { access: BLOB_ACCESS, useCache: false });
   if (!result?.stream) return null;
   const text = await new Response(result.stream).text();
   const parsed = JSON.parse(text) as StoredZohoConnection;
@@ -53,7 +60,7 @@ export function blobZohoConnectionStore(): ZohoConnectionStore {
     read: readBlob,
     async write(record) {
       await put(pathname(record.loginId), JSON.stringify(record), {
-        access: "private",
+        access: BLOB_ACCESS,
         addRandomSuffix: false,
         allowOverwrite: true,
         contentType: "application/json",

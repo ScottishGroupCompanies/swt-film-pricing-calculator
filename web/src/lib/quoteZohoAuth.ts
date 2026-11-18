@@ -22,16 +22,22 @@ export async function resolveQuoteZohoAuth(
   env: Record<string, string | undefined> = process.env,
 ): Promise<QuoteZohoAuth> {
   const org = env.ZOHO_REFRESH_TOKEN?.trim() || "";
-  const stored = await store.read(loginId);
-  const choice = quoteZohoTokenChoice(loginId, stored != null, env);
-  if (choice === "blocked") throw new ZohoNotConnectedError();
-  if (choice === "rep" && stored) {
-    return {
-      loginId,
-      refreshToken: decryptRefreshToken(stored, zohoTokenSecret(env)),
-      source: "rep",
-    };
+  let repToken: string | null = null;
+  try {
+    const stored = await store.read(loginId);
+    if (stored?.ciphertext) repToken = decryptRefreshToken(stored, zohoTokenSecret(env));
+  } catch {
+    // A missing store, a 400 from the wrong blob access mode, or a bad
+    // ciphertext is "not connected". It must not crash the quote route.
+    repToken = null;
   }
-  if (!org) throw new Error("Missing Zoho credentials. Need ZOHO_REFRESH_TOKEN set in environment variables.");
-  return { loginId, refreshToken: org, source: "org" };
+  const choice = quoteZohoTokenChoice(loginId, repToken != null, env);
+  if (choice === "rep" && repToken) {
+    return { loginId, refreshToken: repToken, source: "rep" };
+  }
+  if (choice === "org") {
+    if (!org) throw new Error("Missing Zoho credentials. Need ZOHO_REFRESH_TOKEN set in environment variables.");
+    return { loginId, refreshToken: org, source: "org" };
+  }
+  throw new ZohoNotConnectedError();
 }
