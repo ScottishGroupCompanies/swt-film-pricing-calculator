@@ -25,6 +25,7 @@ import { resolveDealOwner } from "@/lib/zohoOwners";
 import { resolveOpportunityStage } from "@/lib/opportunityStage";
 import { runQuoteZohoRoute } from "@/lib/quoteZohoRoute";
 import { quoteFailureText } from "@/lib/zohoOAuth";
+import { oncePerSubmission, submissionKey } from "@/lib/idempotency";
 
 interface PricingLineItem {
   desc: string;
@@ -94,18 +95,31 @@ interface SubmitPricingRequest {
   bulkDiscount?: number;
   bulkDiscountLabel?: string;
   additionalCharges?: { name: string; description: string; amount: number }[];
+  /** Same id on a double-tap or a retry, so Zoho is not given a second deal. */
+  submissionId?: string;
 }
 
 // Address parsing lives in @/lib/zoho now (parseCityStateZip) — shared with
 // create-estimate-record/route.ts so both use the same tolerant parser.
 
 export async function POST(request: NextRequest) {
-  return runQuoteZohoRoute(() => submitPricing(request));
+  const body: SubmitPricingRequest = await request.json();
+  return runQuoteZohoRoute(async () => {
+    const userId = await getSessionUserId();
+    const key = userId && body.submissionId
+      ? submissionKey(userId, body.submissionId, "deal")
+      : null;
+    const result = await oncePerSubmission(key, async () => {
+      const response = await submitPricing(body);
+      const payload = await response.clone().json();
+      return { httpStatus: response.status, body: payload };
+    });
+    return NextResponse.json(result.body, { status: result.httpStatus });
+  });
 }
 
-async function submitPricing(request: NextRequest) {
+async function submitPricing(body: SubmitPricingRequest) {
   try {
-    const body: SubmitPricingRequest = await request.json();
 
     // Validate required fields
     if (!body.customer || !body.userName || !body.total) {

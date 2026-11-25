@@ -5,6 +5,8 @@ Last updated: V-26.12
 
 All films are organized by brand. Each entry shows: Film Name | Film Cost $/SF | Pricing Group | Customer $/SF
 
+The Customer $/SF column is the V-26.12 Price_Group rate, before the calculator's 3% markup (`SELL_RATE_MARKUP`). Group 7 is listed here at $23.40 because that is what this workbook says. The calculator bills group 7 from $28.40 (the owner's V-10.8 rate) and then applies the same 3%. See `docs/PRICING-LOGIC.md`.
+
 ---
 
 ## Vista

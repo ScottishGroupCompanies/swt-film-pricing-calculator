@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsc -p tsconfig.test.json --pretty false && node --experimental-strip-types --test src/lib/address.test.ts src/lib/estimateLines.test.ts src/lib/booksCustomerLink.test.ts src/lib/filmPickerPlacement.test.ts src/lib/zohoOwners.test.ts src/lib/booksEstimatePayload.test.ts src/lib/bulkFilmDiscount.test.ts src/lib/quoteTotals.test.ts src/lib/additionalCharges.test.ts src/lib/installOnlyLabor.test.ts src/lib/opportunityStage.test.ts src/lib/zohoSubmitResult.test.ts src/lib/reps.test.ts src/lib/zohoConnect.test.ts"
+    "test": "tsc -p tsconfig.test.json --pretty false && node --experimental-strip-types --test src/lib/address.test.ts src/lib/estimateLines.test.ts src/lib/booksCustomerLink.test.ts src/lib/filmPickerPlacement.test.ts src/lib/zohoOwners.test.ts src/lib/booksEstimatePayload.test.ts src/lib/bulkFilmDiscount.test.ts src/lib/quoteTotals.test.ts src/lib/additionalCharges.test.ts src/lib/installOnlyLabor.test.ts src/lib/opportunityStage.test.ts src/lib/zohoSubmitResult.test.ts src/lib/reps.test.ts src/lib/zohoConnect.test.ts src/lib/pricing/workbookOracle.test.ts src/lib/pricing/sellRate.test.ts src/lib/idempotency.test.ts"
   },
   "dependencies": {
     "@sparticuz/chromium": "^147.0.0",

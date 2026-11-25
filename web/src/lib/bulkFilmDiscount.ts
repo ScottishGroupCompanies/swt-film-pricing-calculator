@@ -1,16 +1,12 @@
 /**
- * Bulk film discount from the pricing workbook.
+ * Bulk film discount from ScottishPricing-26_12-Accounts.xlsm.
  *
- * Jenny's V-10.9 workbook (2026-07-31) stores this table at
- * Preferences D46:R56. Film Pricing K47 looks it up with:
- *   IF(K45>0, IF(I47="✓", HLOOKUP(K45, Preferences!F46:R56, M46+1, TRUE) * K45 * -1, 0), 0)
- * K45 is the film total in dollars, M46 is the highest pricing group,
- * and I47 is the checkbox (default checked). The sheet labels that row "Other".
- *
- * The copy in this repo, data/ScottishPricing-26_12-Accounts.xlsm, has the
- * same thresholds and rates 12 rows higher, at Preferences!F34:R44, and
- * Film Pricing!K47 points there. Blank cells are 0. Column H ($1,000) is
- * blank for groups 1–7. Groups 8–10 are blank from $500 through $2,500.
+ * Film Pricing!K47:
+ *   IF(K45>0, IF(I47="✓", HLOOKUP(K45, Preferences!F34:R44, M46+1, TRUE) * K45 * -1, 0), 0)
+ * K45 is the film total, M46 is the highest pricing group, and I47 is the
+ * checkbox (default checked). Empty cells in that table come back as 0.
+ * The rate itself is read from the generated catalog, not from the arrays
+ * below. Those arrays are the same numbers with blanks written as 0.
  *
  * Commission in this app stays a flat rate per rep. This table is only
  * the customer bulk discount.
@@ -18,6 +14,8 @@
  * HLOOKUP approximate match: the greatest threshold less than or equal
  * to the film total. Pricing group 0, or anything outside 1–10, is no discount.
  */
+
+import { bulkDiscountRate } from "./pricing/engine.ts";
 
 export const BULK_FILM_DISCOUNT_LABEL = "Bulk film discount";
 
@@ -38,18 +36,7 @@ export interface BulkFilmDiscountResult {
 }
 
 export function bulkFilmRate(highestPg: number, filmTotal: number): number {
-  if (!(filmTotal > 0) || !(highestPg >= 1)) return 0;
-  const rates = highestPg <= 7
-    ? BULK_FILM_RATES_GROUPS_1_TO_7
-    : highestPg <= 10
-      ? BULK_FILM_RATES_GROUPS_8_TO_10
-      : null;
-  if (!rates) return 0;
-  let index = 0;
-  for (let i = 0; i < BULK_FILM_THRESHOLDS.length; i++) {
-    if (filmTotal >= BULK_FILM_THRESHOLDS[i]) index = i;
-  }
-  return rates[index] ?? 0;
+  return bulkDiscountRate(highestPg, filmTotal);
 }
 
 export function bulkFilmDiscount(input: {
@@ -62,7 +49,7 @@ export function bulkFilmDiscount(input: {
   if (input.enabled === false) return none;
   const rate = bulkFilmRate(input.highestPg, input.filmTotal);
   if (!(rate > 0)) return none;
-  const amount = Math.round((input.filmTotal * rate + Number.EPSILON) * 100) / 100;
+  const amount = input.filmTotal * rate;
   if (!(amount > 0)) return none;
   return { amount, rate, label: BULK_FILM_DISCOUNT_LABEL };
 }
@@ -75,7 +62,7 @@ export function formatDiscountPercent(rate: number): string {
 /**
  * Post-film-total math shared by the calculator, the proposal, and Zoho.
  *
- * Order: film total (after the $250 minimum) → bulk film discount →
+ * Order: film total (Film Pricing does not apply the $250 window minimum) → bulk film discount →
  * manual discount % → attachment/other and additional charges → fee.
  * Install-only quotes skip the bulk film discount because no film is sold.
  * The labor amount itself is the film total the caller already calculated

@@ -66,11 +66,11 @@ web/
 
 | Rule | Value |
 |------|-------|
-| Roll widths | 36", 48", 60", 72" |
-| Charged SF formula | `roll_width × (height + 1") × qty ÷ 144` |
-| Minimum dimension | 8" (any side shorter → treated as 8") |
-| Minimum job price | $250 |
-| Commission basis | Highest pricing group present on the job |
+| Roll widths | 36" through 144", smallest roll that fits the cut |
+| Charged SF | Cheapest of the Film Pricing sheet's cut options (rows 26–41) |
+| Sell rate | Workbook group rate × 1.03. Group 7 starts at $28.40 (V-10.8), then × 1.03 |
+| 8" side and $250 minimum | Stained-glass Window Pricing only. Not applied to film |
+| Commission basis | Flat rate per rep, on the total after the bulk discount and before the fee |
 
 See `docs/PRICING-LOGIC.md` and `docs/COMMISSION-TIERS.md` for full detail.
 

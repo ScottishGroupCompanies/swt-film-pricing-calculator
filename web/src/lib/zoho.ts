@@ -22,6 +22,7 @@ import {
 import type { BooksCustomerLinkClient, LinkedBooksCustomer } from "./booksCustomerLink";
 import { booksLineItemBody } from "./booksEstimatePayload";
 import { createHash } from "node:crypto";
+import { singleFlight, zohoFetch } from "./zohoTransport";
 import { booksSalespersonRows, matchBooksSalesperson, stageValueToSend } from "@/config/reps";
 import { zohoCallAuth } from "./zohoCallContext";
 import { ZohoReconnectError, connectOAuthClient, orgOAuthClient, zohoAccountsOrigin, zohoRefreshIsRevoked } from "./zohoOAuth";
@@ -93,33 +94,44 @@ export async function getAccessToken(): Promise<string> {
   const cached = accessTokenCache.get(key);
   if (cached && now < cached.expiresAt - 5 * 60 * 1000) return cached.token;
 
-  const tokenUrl = process.env.ZOHO_ACCOUNTS_URL || `${zohoAccountsOrigin()}/oauth/v2/token`;
-  const resp = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: oauth.clientId,
-      client_secret: oauth.clientSecret,
-      grant_type: "refresh_token",
-    }),
+  return singleFlight(`refresh:${key}`, async () => {
+    const fresh = accessTokenCache.get(key);
+    if (fresh && Date.now() < fresh.expiresAt - 5 * 60 * 1000) return fresh.token;
+    const tokenUrl = process.env.ZOHO_ACCOUNTS_URL || `${zohoAccountsOrigin()}/oauth/v2/token`;
+    let data: { access_token?: string; expires_in?: number; error?: string } = {};
+    let status = 0;
+    try {
+      const result = await zohoFetch({
+        method: "POST",
+        url: tokenUrl,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          refresh_token: refreshToken,
+          client_id: oauth.clientId,
+          client_secret: oauth.clientSecret,
+          grant_type: "refresh_token",
+        }),
+        idempotent: true,
+        timeoutMs: 15000,
+      });
+      status = result.status;
+      data = (result.data ?? {}) as { access_token?: string; expires_in?: number; error?: string };
+    } catch (error) {
+      accessTokenCache.delete(key);
+      const body = error && typeof error === "object" && "body" in error ? (error as { body?: unknown }).body : undefined;
+      const errorStatus = error && typeof error === "object" && "status" in error ? Number((error as { status?: number }).status) : 0;
+      if (zohoRefreshIsRevoked(errorStatus, body ?? data)) throw new ZohoReconnectError();
+      throw error;
+    }
+    if (data.error || !data.access_token) {
+      accessTokenCache.delete(key);
+      if (zohoRefreshIsRevoked(status, data)) throw new ZohoReconnectError();
+      throw new Error(`Zoho token refresh failed (${status}${data.error ? `: ${data.error}` : ""})`);
+    }
+    const token = data.access_token;
+    accessTokenCache.set(key, { token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 });
+    return token;
   });
-  const raw = await resp.text();
-  let data: { access_token?: string; expires_in?: number; error?: string } = {};
-  try {
-    data = raw ? JSON.parse(raw) as { access_token?: string; expires_in?: number; error?: string } : {};
-  } catch {
-    data = {};
-  }
-  if (!resp.ok || data.error || !data.access_token) {
-    accessTokenCache.delete(key);
-    if (zohoRefreshIsRevoked(resp.status, data)) throw new ZohoReconnectError();
-    throw new Error(`Zoho token refresh failed (${resp.status}${data.error ? `: ${data.error}` : ""})`);
-  }
-
-  const token = data.access_token;
-  accessTokenCache.set(key, { token, expiresAt: now + (data.expires_in || 3600) * 1000 });
-  return token;
 }
 
 // ─── CRM API ─────────────────────────────────────────────────────────────
@@ -138,32 +150,19 @@ export async function crmApiCall(
 ): Promise<unknown> {
   const config = getZohoConfig();
   const token = await getAccessToken();
-  
   const url = `${config.crmApiBase}${path}`;
   const headers: Record<string, string> = {
     "Authorization": `Zoho-oauthtoken ${token}`,
   };
-
-  if (body) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  const resp = await fetch(url, {
+  if (body) headers["Content-Type"] = "application/json";
+  const result = await zohoFetch({
     method,
+    url,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    idempotent: method === "GET",
   });
-
-  // Zoho returns an empty body (e.g. 204, or 200 with no content) for some
-  // GET/search calls that find nothing — guard against JSON parse errors.
-  const rawText = await resp.text();
-  const data = rawText ? JSON.parse(rawText) : {};
-
-  if (!resp.ok) {
-    throw new Error(`Zoho CRM API error (${resp.status}) ${method} ${path}: ${JSON.stringify(data)}`);
-  }
-
-  return data;
+  return result.data;
 }
 
 interface CrmUserRow {
@@ -563,18 +562,13 @@ export async function attachFile(
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), fileName);
 
-  const resp = await fetch(`${config.crmApiBase}/${module}/${recordId}/Attachments`, {
+  const uploaded = await zohoFetch({
     method: "POST",
+    url: `${config.crmApiBase}/${module}/${recordId}/Attachments`,
     headers: { "Authorization": `Zoho-oauthtoken ${token}` },
     body: form,
   });
-
-  const rawText = await resp.text();
-  const data = rawText ? JSON.parse(rawText) : {};
-
-  if (!resp.ok) {
-    throw new Error(`Zoho attachment upload error (${resp.status}): ${JSON.stringify(data)}`);
-  }
+  const data = uploaded.data as { data?: { details?: { id?: string } }[] };
 
   const id = data?.data?.[0]?.details?.id;
   if (!id) throw new Error(`Failed to attach file: no ID returned — ${JSON.stringify(data)}`);
@@ -723,29 +717,18 @@ export async function sheetApiCall(
 ): Promise<unknown> {
   const config = getZohoConfig();
   const token = await getAccessToken();
-  
-  const url = `${config.sheetApiBase}${path}`;
   const headers: Record<string, string> = {
     "Authorization": `Zoho-oauthtoken ${token}`,
   };
-
-  if (body) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  const resp = await fetch(url, {
+  if (body) headers["Content-Type"] = "application/json";
+  const result = await zohoFetch({
     method,
+    url: `${config.sheetApiBase}${path}`,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    idempotent: method === "GET",
   });
-
-  const data = await resp.json();
-
-  if (!resp.ok) {
-    throw new Error(`Zoho Sheet API error (${resp.status}) ${method} ${path}: ${JSON.stringify(data)}`);
-  }
-
-  return data;
+  return result.data;
 }
 
 /**
@@ -803,28 +786,19 @@ export async function booksApiCall(
 ): Promise<unknown> {
   const config = getZohoConfig();
   const token = await getAccessToken();
-
   const separator = path.includes("?") ? "&" : "?";
-  const url = `${config.booksApiBase}${path}${separator}organization_id=${orgId}`;
   const headers: Record<string, string> = {
     "Authorization": `Zoho-oauthtoken ${token}`,
   };
   if (body) headers["Content-Type"] = "application/json";
-
-  const resp = await fetch(url, {
+  const result = await zohoFetch({
     method,
+    url: `${config.booksApiBase}${path}${separator}organization_id=${orgId}`,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    idempotent: method === "GET",
   });
-
-  const rawText = await resp.text();
-  const data = rawText ? JSON.parse(rawText) : {};
-
-  if (!resp.ok) {
-    throw new Error(`Zoho Books API error (${resp.status}) ${method} ${path}: ${JSON.stringify(data)}`);
-  }
-
-  return data;
+  return result.data;
 }
 
 /**

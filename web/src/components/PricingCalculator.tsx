@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import {
-  PRICING_GROUPS, MIN_PRICE, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT,
+  PRICING_GROUPS, MIN_DIM_DEFAULT, DEFAULT_FEE_PCT,
   INSTALL_ONLY_RATE_PER_SQ_FT, exactWindowSqFt, installOnlyLaborTotal,
   FILMS, BRANDS, BRAND_COLORS,
   fmt$, fmtSF, getCommRate, calcRowGeometry, newRow, initials,
@@ -231,11 +231,11 @@ function FilmPicker({
                   ref={inputRef}
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search 295 films by name…"
+                  placeholder={`Search ${FILMS.length} films by name…`}
                   style={{
                     width: "100%", boxSizing: "border-box", padding: "7px 10px 7px 32px",
                     border: `1px solid ${THEME.border}`, borderRadius: 8,
-                    fontSize: 13, fontFamily: "inherit", outline: "none",
+                    fontSize: 16, fontFamily: "inherit", outline: "none",
                     color: THEME.textDark,
                   }}
                 />
@@ -309,9 +309,9 @@ function FilmPicker({
                   gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1fr)",
                   gap: 0, padding: "0 4px", minWidth: 0,
                 }}>
-                  {films.map((f) => (
+                  {films.map((f, index) => (
                     <div
-                      key={f.name}
+                      key={`${f.brand}-${f.name}-${f.pg}-${index}`}
                       onClick={() => { onFilm(f); setOpen(false); setQ(""); setBrandFilter(null); }}
                       style={{
                         padding: "8px 10px", cursor: "pointer",
@@ -485,6 +485,7 @@ function ContactSearchPicker({
         .then((data) => {
           if (data.success) {
             setResults(data.results || []);
+            if (!data.results?.length && data.warning) setError(data.warning);
           } else {
             setError(data.error || "Search failed");
             setResults([]);
@@ -547,7 +548,7 @@ function ContactSearchPicker({
               style={{
                 width: "100%", padding: "7px 10px",
                 border: `1px solid ${THEME.border}`, borderRadius: 8,
-                fontSize: 13, fontFamily: "inherit", outline: "none",
+                fontSize: 16, fontFamily: "inherit", outline: "none",
                 color: THEME.textDark,
               }}
             />
@@ -645,14 +646,14 @@ const labelSt: React.CSSProperties = {
 
 const inputSt: React.CSSProperties = {
   padding: "9px 12px", border: `1px solid ${THEME.border}`, borderRadius: 8,
-  background: THEME.white, color: THEME.textDark, fontSize: 13,
+  background: THEME.white, color: THEME.textDark, fontSize: 16,
   fontFamily: "inherit", outline: "none", width: "100%",
   transition: "border-color 0.15s",
 };
 
 const cellSt: React.CSSProperties = {
   padding: "6px 8px", border: "1px solid transparent", borderRadius: 6,
-  background: "transparent", color: THEME.textDark, fontSize: 12,
+  background: "transparent", color: THEME.textDark, fontSize: 16,
   fontFamily: "inherit", outline: "none",
 };
 
@@ -844,6 +845,7 @@ export default function PricingCalculator() {
   const [showProposals, setShowProposals] = useState(false);
   const [chargedToClient, setChargedToClient] = useState<string>("");
   const [zohoStatus, setZohoStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const submissionIdRef = useRef("");
   const [zohoResult, setZohoResult] = useState<{ contactId?: string; accountId?: string; dealId?: string; opportunityNumber?: string | null; sheetRowAdded?: boolean; errors?: string[] } | null>(null);
   const [zohoEnabled, setZohoEnabled] = useState<boolean | null>(null);
   const [zohoLink, setZohoLink] = useState<{
@@ -1053,13 +1055,13 @@ export default function PricingCalculator() {
     });
     const hasPrice = totalPrice > 0;
     const rawTotal = hasPrice ? totalPrice : null;
-    const total = rawTotal != null ? Math.max(rawTotal, MIN_PRICE) : null;
-    const minAdj = total != null && rawTotal != null && total > rawTotal ? total - rawTotal : 0;
+    // Film Pricing does not raise a job to the $250 figure on Preferences.
+    const total = rawTotal;
+    const minAdj = 0;
 
-    // Film total (after the $250 minimum) → bulk film discount → manual
-    // discount % → attachment/other and additional charges → fee.
+    // Film total → bulk film discount → manual discount % →
+    // attachment/other and additional charges → fee.
     // Install-only labor is already in filmTotal at $10 per exact square foot.
-    // The $250 job minimum still applies. Film roll waste does not.
     const filmTotal = total ?? 0;
     const commRate = user ? getCommRate(user) : null;
     const adjustments = quoteAdjustments({
@@ -1222,6 +1224,7 @@ export default function PricingCalculator() {
     setShowProposals(false);
     setChargedToClient("");
     setZohoStatus("idle");
+    submissionIdRef.current = "";
     setZohoResult(null);
     setEstimateRecordStatus("idle");
     setEstimateRecordResult(null);
@@ -1299,7 +1302,11 @@ export default function PricingCalculator() {
       const resp = await fetch("/api/zoho/submit-pricing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...proposalData, existingContactId }),
+        body: JSON.stringify({
+          ...proposalData,
+          existingContactId,
+          submissionId: submissionIdRef.current || (submissionIdRef.current = crypto.randomUUID()),
+        }),
       });
       const data = await readZohoResponse(resp);
 
@@ -1360,6 +1367,7 @@ export default function PricingCalculator() {
           bulkDiscountLabel: proposalData.bulkDiscountLabel,
           additionalCharges: proposalData.additionalCharges,
           lines: proposalData.lines,
+          submissionId: submissionIdRef.current || (submissionIdRef.current = crypto.randomUUID()),
         }),
       });
       const data = await readZohoResponse(resp);
@@ -1578,7 +1586,7 @@ export default function PricingCalculator() {
             </button>
             {installOnly && (
               <p style={{ fontSize: 12, color: THEME.textMuted, margin: "0 0 12px" }}>
-                {`Film material is $0. Installation labor is $${INSTALL_ONLY_RATE_PER_SQ_FT.toFixed(2)} per exact square foot (measured area, no waste). The $250 job minimum still applies.`}
+                {`Film material is $0. Installation labor is $${INSTALL_ONLY_RATE_PER_SQ_FT.toFixed(2)} per exact square foot (measured area, no waste).`}
               </p>
             )}
 
@@ -2291,7 +2299,7 @@ export default function PricingCalculator() {
                         width: "100%", padding: "7px 24px 7px 10px",
                         border: `1px solid ${THEME.border}`, borderRadius: 6,
                         background: discountEnabled ? THEME.white : THEME.lightGray,
-                        color: THEME.textDark, fontSize: 13, fontFamily: "inherit", outline: "none",
+                        color: THEME.textDark, fontSize: 16, fontFamily: "inherit", outline: "none",
                         fontVariantNumeric: "tabular-nums",
                         opacity: discountEnabled ? 1 : 0.5,
                       }}
@@ -2384,7 +2392,7 @@ export default function PricingCalculator() {
                           width: "100%", padding: "7px 10px",
                           border: `1px solid ${THEME.border}`, borderRadius: 6,
                           background: THEME.white, color: THEME.textDark,
-                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                          fontSize: 16, fontFamily: "inherit", outline: "none",
                         }}
                       />
                       <input
@@ -2397,7 +2405,7 @@ export default function PricingCalculator() {
                           width: "100%", padding: "7px 10px",
                           border: `1px solid ${THEME.border}`, borderRadius: 6,
                           background: THEME.white, color: THEME.textDark,
-                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                          fontSize: 16, fontFamily: "inherit", outline: "none",
                           fontVariantNumeric: "tabular-nums",
                         }}
                       />
@@ -2455,7 +2463,7 @@ export default function PricingCalculator() {
                           width: "100%", padding: "7px 10px",
                           border: `1px solid ${THEME.border}`, borderRadius: 6,
                           background: THEME.white, color: THEME.textDark,
-                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                          fontSize: 16, fontFamily: "inherit", outline: "none",
                         }}
                       />
                       <input
@@ -2468,7 +2476,7 @@ export default function PricingCalculator() {
                           width: "100%", padding: "7px 10px",
                           border: `1px solid ${THEME.border}`, borderRadius: 6,
                           background: THEME.white, color: THEME.textDark,
-                          fontSize: 13, fontFamily: "inherit", outline: "none",
+                          fontSize: 16, fontFamily: "inherit", outline: "none",
                           fontVariantNumeric: "tabular-nums",
                         }}
                       />
@@ -2526,7 +2534,7 @@ export default function PricingCalculator() {
                       width: "100%", padding: "7px 10px",
                       border: `1px solid ${THEME.border}`, borderRadius: 6,
                       background: THEME.white, color: THEME.textDark,
-                      fontSize: 13, fontFamily: "inherit", outline: "none",
+                      fontSize: 16, fontFamily: "inherit", outline: "none",
                       fontVariantNumeric: "tabular-nums",
                     }}
                   />
@@ -2607,7 +2615,7 @@ export default function PricingCalculator() {
                       width: "100%", padding: "7px 10px",
                       border: `1px solid ${THEME.border}`, borderRadius: 6,
                       background: THEME.white, color: THEME.textDark,
-                      fontSize: 13, fontFamily: "inherit", outline: "none",
+                      fontSize: 16, fontFamily: "inherit", outline: "none",
                       fontVariantNumeric: "tabular-nums",
                     }}
                   />

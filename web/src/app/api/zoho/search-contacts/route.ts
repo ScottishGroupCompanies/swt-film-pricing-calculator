@@ -22,6 +22,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { quoteFailureText } from "@/lib/zohoOAuth";
 import {
   searchContactsFuzzy, searchDealsFuzzy, searchLeadsFuzzy, searchAccountsFuzzy,
   getRecord, type ZohoCRMRecord,
@@ -228,12 +229,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, results: [] });
     }
 
-    const [contacts, deals, leads, accounts] = await Promise.all([
+    const settled = await Promise.allSettled([
       searchContactsFuzzy(q, 6),
       searchDealsFuzzy(q, 6),
       searchLeadsFuzzy(q, 6),
       searchAccountsFuzzy(q, 6),
     ]);
+    const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected");
+    const values = settled.map((item) => item.status === "fulfilled" ? item.value : []);
+    const [contacts, deals, leads, accounts] = values as [
+      Awaited<ReturnType<typeof searchContactsFuzzy>>,
+      Awaited<ReturnType<typeof searchDealsFuzzy>>,
+      Awaited<ReturnType<typeof searchLeadsFuzzy>>,
+      Awaited<ReturnType<typeof searchAccountsFuzzy>>,
+    ];
+    if (failures.length === settled.length) {
+      throw failures[0].reason;
+    }
 
     const [formattedContacts, formattedDeals, formattedLeads, formattedAccounts] = await Promise.all([
       Promise.all(contacts.map(formatContact)),
@@ -248,11 +260,14 @@ export async function GET(request: NextRequest) {
     // Accounts (real businesses), then Contacts, then Leads (least
     // "ready" — no Deal/Account exists for these yet).
     const results = [...formattedDeals, ...formattedAccounts, ...formattedContacts, ...formattedLeads];
+    const warning = failures.length
+      ? quoteFailureText(failures[0].reason)
+      : undefined;
 
-    return NextResponse.json({ success: true, results });
+    return NextResponse.json({ success: true, results, warning });
   } catch (e) {
     return NextResponse.json(
-      { success: false, error: e instanceof Error ? e.message : "Internal server error", results: [] },
+      { success: false, error: quoteFailureText(e), results: [] },
       { status: 500 }
     );
   }
