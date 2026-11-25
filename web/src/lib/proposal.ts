@@ -1,6 +1,6 @@
 // Client-side proposal/summary generation — no AI API needed
 import { additionalChargeHeading } from "./additionalCharges";
-import { fmt$, INSTALL_ONLY_RATE_PER_SQ_FT, MIN_PRICE } from "./pricingData";
+import { fmt$, INSTALL_ONLY_RATE_PER_SQ_FT } from "./pricingData";
 
 // $ amount with an explicit +/− sign instead of fmt$'s native "$-X" on negatives.
 const signed$ = (n: number): string => `${n >= 0 ? "+" : "−"}${fmt$(Math.abs(n))}`;
@@ -385,7 +385,6 @@ export function buildInternalRecord(d: ProposalData): string {
 Customer: ${d.customer || "—"}
 Address: ${d.address || "—"}
 ${contactLines ? contactLines + "\n" : ""}User: ${d.userName || "—"} (${d.userLoc || "—"})
-Min job price: $${MIN_PRICE}
 
 LINE ITEMS:
 ${lines}

@@ -132,7 +132,11 @@ export function zohoRefreshIsRevoked(_status: number, body: unknown): boolean {
 
 export function quoteFailureText(error: unknown): string {
   if (error instanceof ZohoReconnectError) throw error;
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  if (/Crm_Implied_Api_Access/i.test(message) && !/Zoho admin/.test(message)) {
+    return "Zoho refused this login because the user's profile does not include CRM API access (Crm_Implied_Api_Access). A Zoho admin needs to turn on API permission for that profile. The quote itself is fine.";
+  }
+  return message;
 }
 
 export async function exchangeAuthorizationCode(input: {

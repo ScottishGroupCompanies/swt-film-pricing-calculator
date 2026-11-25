@@ -47,6 +47,7 @@ import { findUserById } from "@/lib/auth";
 import { booksSalespersonIdEnvKey } from "@/lib/zohoOwners";
 import { runQuoteZohoRoute } from "@/lib/quoteZohoRoute";
 import { quoteFailureText } from "@/lib/zohoOAuth";
+import { oncePerSubmission, submissionKey } from "@/lib/idempotency";
 
 interface EstimateLine {
   desc: string;
@@ -87,6 +88,8 @@ interface CreateEstimateRequest {
   bulkDiscountLabel?: string;
   additionalCharges?: { name: string; description: string; amount: number }[];
   lines: EstimateLine[];
+  /** Same id the deal send used, so a second tap does not create another estimate. */
+  submissionId?: string;
 }
 
 function parseDateForBooks(displayDate: string): string {
@@ -110,12 +113,23 @@ function lookupId(value: unknown): string | null {
 }
 
 export async function POST(request: NextRequest) {
-  return runQuoteZohoRoute(() => createEstimate(request));
+  const body: CreateEstimateRequest = await request.json();
+  return runQuoteZohoRoute(async () => {
+    const userId = await getSessionUserId();
+    const key = userId && body.submissionId
+      ? submissionKey(userId, body.submissionId, "estimate")
+      : null;
+    const result = await oncePerSubmission(key, async () => {
+      const response = await createEstimate(body);
+      const payload = await response.clone().json();
+      return { httpStatus: response.status, body: payload };
+    });
+    return NextResponse.json(result.body, { status: result.httpStatus });
+  });
 }
 
-async function createEstimate(request: NextRequest) {
+async function createEstimate(body: CreateEstimateRequest) {
   try {
-    const body: CreateEstimateRequest = await request.json();
 
     if (!body.dealId) {
       return NextResponse.json(
