@@ -1,17 +1,20 @@
 // SWT Film Pricing Calculator — Data
-// Prices, films, and bulk discounts: data/ScottishPricing-26_12-Accounts.xlsm
-// (generated into ./pricing/catalog.ts). V-10.9 rates are not used.
+// Films, bulk discounts, and the Price_Group table: data/ScottishPricing-26_12-Accounts.xlsm
+// (generated into ./pricing/catalog.ts).
+// The billed $/SF is that table times SELL_RATE_MARKUP, except group 7, which
+// starts from $28.40 (V-10.8) and then gets the same markup. See engine.ts.
+// The $250 minimum and the 8" minimum side are stained-glass Window Pricing
+// only. Film quotes do not apply them.
 
 export {
   FILMS,
-  PRICING_GROUP_RATES as PRICING_GROUPS,
   WORKBOOK_MIN_DIMENSION_INCHES as MIN_DIM_DEFAULT,
   WORKBOOK_MIN_WINDOW_PRICE as MIN_PRICE,
 } from "./pricing/catalog.ts";
 import type { CatalogFilm as Film } from "./pricing/catalog.ts";
 export type { Film };
-import { chargedArea, ROLL_WIDTHS } from "./pricing/engine.ts";
-export { ROLL_WIDTHS };
+import { chargedArea, ROLL_WIDTHS, SELL_RATES } from "./pricing/engine.ts";
+export { ROLL_WIDTHS, SELL_RATES as PRICING_GROUPS };
 
 /**
  * Install-only labor rate. Multiplied by the window's exact measured

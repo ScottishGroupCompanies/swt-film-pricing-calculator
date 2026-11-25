@@ -1,11 +1,22 @@
 /**
  * Film Pricing sheet math from ScottishPricing-26_12-Accounts.xlsm.
  *
- * Charged area follows column J on rows 26–41: MIN of columns R, S, and T.
- * Rows 16–25 use a shorter column T that ignores a height gang. That split
- * is covered by the workbook test and called out in the rebuild notes.
- * The 8" minimum and the $250 minimum are labels on Preferences. The Film
- * Pricing formulas do not use them.
+ * Order, matching the previous calculator:
+ * 1. Charged square feet from the Film Pricing sheet (rows 26–41).
+ * 2. Sell rate: the workbook Price_Group rate, with group 7 replaced by
+ *    $28.40 (owner's V-10.8 rate), then multiplied by SELL_RATE_MARKUP.
+ * 3. Line total = charged square feet × that sell rate.
+ * 4. Bulk discount is a percent of the film total (those lines, plus removal
+ *    and French panes when a caller passes them).
+ * 5. Attachment, other charges, and a typed percent discount.
+ * 6. The 4% fee on that subtotal.
+ *
+ * The 3% is not applied again to the fee or the discount. The $250 job
+ * minimum and the 8" minimum side are stained-glass Window Pricing rules.
+ * Film Pricing formulas do not use them, and neither does this engine.
+ *
+ * Rows 16–25 of the sheet use a shorter column T that ignores a height gang.
+ * That split is covered by the workbook test.
  */
 
 import {
@@ -96,9 +107,47 @@ export function bulkDiscountRate(pricingGroup: number, filmTotal: number): numbe
   return rate == null ? 0 : rate;
 }
 
-export function groupRate(pricingGroup: number): number | null {
+/**
+ * Added to every group's sell rate before a line is priced.
+ * The previous app stored the already-marked-up rates (15.73 × 1.03 = 16.2019,
+ * and the same for the other groups). One constant, applied in sellRate().
+ */
+export const SELL_RATE_MARKUP = 1.03;
+
+/**
+ * V-26.12 lists group 7 at $23.40. The owner's V-10.8 workbook sells group 7
+ * at $28.40. This replaces the V-26.12 group 7 rate before SELL_RATE_MARKUP.
+ * 28.40 × 1.03 = 29.252, which is the rate the previous app charged.
+ */
+export const GROUP_7_SELL_RATE_BEFORE_MARKUP = 28.4;
+
+/** Sell rates are stored to 4 decimal places, same as the previous app. */
+export function roundSellRate(amount: number): number {
+  return Math.round(amount * 10000) / 10000;
+}
+
+/** Workbook $/SF, after the group 7 override and before the 3% markup. */
+export function sellRateBeforeMarkup(pricingGroup: number): number | null {
+  if (pricingGroup === 7) return GROUP_7_SELL_RATE_BEFORE_MARKUP;
   const rate = PRICING_GROUP_RATES[pricingGroup];
   return rate == null ? null : rate;
+}
+
+/** Dollars per charged square foot actually billed. */
+export function sellRate(pricingGroup: number): number | null {
+  const base = sellRateBeforeMarkup(pricingGroup);
+  if (base == null) return null;
+  return roundSellRate(base * SELL_RATE_MARKUP);
+}
+
+export const SELL_RATES: Record<number, number> = {};
+for (let group = 1; group <= 10; group++) {
+  const rate = sellRate(group);
+  if (rate != null) SELL_RATES[group] = rate;
+}
+
+export function groupRate(pricingGroup: number): number | null {
+  return sellRate(pricingGroup);
 }
 
 export interface FilmLineInput {

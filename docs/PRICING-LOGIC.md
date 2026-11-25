@@ -8,7 +8,7 @@ All rules sourced from `ScottishPricing-26_12-Accounts.xlsm`, Preferences sheet.
 
 Available roll widths: **36", 48", 60", 72"**
 
-For each window line item, the roll assigned is the **smallest roll width that is greater than or equal to the window width** (after minimum dimension is applied).
+For each window line item, the roll assigned is the **smallest roll width that is greater than or equal to the window width**. Film quotes do not apply the 8" minimum first. That minimum is stained-glass Window Pricing only.
 
 ```
 getRoll(windowWidth):
@@ -38,7 +38,7 @@ chargedSF = rollWidth × (height + 1) × qty ÷ 144
 ```
 
 - `rollWidth` — assigned roll width (inches)
-- `height` — window height in inches (after min dim applied)
+- `height` — window height in inches, as entered
 - `qty` — number of identical windows
 - `÷ 144` — converts square inches to square feet
 
@@ -51,49 +51,47 @@ actualSF = width × height × qty ÷ 144
 
 ---
 
-## Minimum Dimension
+## Minimum Dimension and Minimum Job Price
 
-**Default: 8 inches** (from Preferences sheet)
-
-Any window dimension (width OR height) smaller than the minimum is treated as the minimum for calculation purposes. This applies before roll width selection.
-
-```
-effectiveWidth  = max(inputWidth,  minDim)
-effectiveHeight = max(inputHeight, minDim)
-```
-
-The minimum dimension is editable in the calculator header for non-standard jobs.
-
----
-
-## Minimum Job Price
-
-**$250.00**
-
-If the calculated job total is below $250, the total is adjusted up to $250. The adjustment is shown separately in the summary so the rep can see what was added.
+Preferences lists an 8" minimum side and a $250 minimum window price. Those rules belong to the stained-glass **Window Pricing** sheet. The Film Pricing formulas do not use them, and the film calculator does not either. A film window is priced at the size the rep enters, and a small film job is not raised to $250.
 
 ---
 
 ## Customer Price (Pricing Groups)
 
-The customer is charged based on the **pricing group** of each film, not the film's raw cost. Each pricing group has a fixed $/SF rate:
+The customer is charged from the film's pricing group. V-26.12 Price_Group rates:
 
-| Group | Customer $/SF |
-|-------|--------------|
-| 1     | $15.73       |
-| 2     | $16.78       |
-| 3     | $17.83       |
-| 4     | $19.86       |
-| 5     | $22.88       |
-| 6     | $26.13       |
-| 7     | $23.40       |
-| 8     | $33.52       |
-| 9     | $39.90       |
-| 10    | $45.98       |
+| Group | Workbook $/SF |
+|-------|----------------|
+| 1     | $15.73         |
+| 2     | $16.78         |
+| 3     | $17.83         |
+| 4     | $19.86         |
+| 5     | $22.88         |
+| 6     | $26.13         |
+| 7     | $23.40 on this sheet. The calculator uses **$28.40** from the owner's V-10.8 workbook instead. |
+| 8     | $33.52         |
+| 9     | $39.90         |
+| 10    | $45.98         |
 
-Line total = `chargedSF × groupRate`
+The billed rate is that figure times **1.03** (`SELL_RATE_MARKUP` in `web/src/lib/pricing/engine.ts`), rounded to 4 decimal places. That is the same 3% the previous app had already baked into its rates. It is applied only to the $/SF, before the line total. The bulk discount and the 4% fee are calculated after that, on the marked-up dollars. They are not marked up a second time.
 
-Job total = sum of all line totals, floored at $250 minimum.
+| Group | Billed $/SF |
+|-------|-------------|
+| 1     | 16.2019     |
+| 2     | 17.2834     |
+| 3     | 18.3649     |
+| 4     | 20.4558     |
+| 5     | 23.5664     |
+| 6     | 26.9139     |
+| 7     | 29.252 (28.40 × 1.03) |
+| 8     | 34.5256     |
+| 9     | 41.097      |
+| 10    | 47.3594     |
+
+Line total = `chargedSF × billedRate`
+
+Film total = sum of the line totals. No $250 floor.
 
 ---
 
@@ -109,7 +107,7 @@ A rep can override the pricing group on any individual line if needed (e.g. for 
 
 ### Commission Basis
 
-Commission is calculated on the **full job total** (after minimum price adjustment), using the **highest pricing group present** anywhere on the job.
+The film calculator pays the rep a flat rate from their login, on the subtotal after the bulk discount and before the 4% fee. It does not use a $250 minimum. The table below is the workbook's tier table. On the Film Pricing sheet that same table is the customer bulk discount, not the rep's commission.
 
 If a job has five Group 2 windows and one Group 6 window, the commission rate is looked up using Group 6.
 
